@@ -1,0 +1,110 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model ScheduleConfig {
+  id            String   @id @default(cuid())
+  shop          String
+  scheduleType  String   @default("LABORAL") // "LABORAL" | "FESTIVO"
+  startHour     Int      @default(8)          // hora de inicio (0-23)
+  endHour       Int      @default(20)         // hora de fin (0-23)
+  slotDuration  Int      @default(60)         // duración del slot en minutos
+  workDays      String   @default("1,2,3,4,5") // días de semana separados por coma (1=Lun, 7=Dom)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, scheduleType])
+}
+
+model Holiday {
+  id          String   @id @default(cuid())
+  shop        String
+  date        DateTime
+  description String
+  priceExtra  Float    @default(0) // sobrecargo en € por hora en día festivo
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, date])
+}
+
+// Paquete de horas comprado por el cliente en una orden
+model HourPackage {
+  id              String    @id @default(cuid())
+  shop            String
+  orderId         String
+  orderName       String    @default("")
+  productId       String
+  productTitle    String    @default("")
+  customerEmail   String
+  customerName    String    @default("")
+  customerId      String    @default("") // Shopify customer GID
+  customerAddress String    @default("") // Dirección completa para mostrar en admin
+  customerTags    String    @default("") // Tags del cliente (ej. "PRIME,VIP") separados por coma
+  hoursTotal      Int                     // total de horas compradas
+  hoursUsed       Int       @default(0)  // horas ya agendadas
+  purchasedAt     DateTime  @default(now())
+  expiresAt       DateTime               // purchasedAt + 1 año
+  accessToken     String    @default("") // token único para el portal del cliente
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  slots           BookingSlot[]
+
+  @@unique([shop, orderId])
+}
+
+// Slot de servicio agendado dentro de un paquete
+model BookingSlot {
+  id            String      @id @default(cuid())
+  shop          String
+  packageId     String
+  package       HourPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  date          DateTime
+  startTime     String      // "HH:MM"
+  hours         Int         // horas usadas en este slot
+  notes         String      @default("")
+  status        String      @default("CONFIRMED") // "CONFIRMED" | "CANCELLED"
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  notifications NotificationLog[]
+}
+
+model NotificationLog {
+  id        String      @id @default(cuid())
+  slotId    String
+  slot      BookingSlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  type      String      // "DAY_BEFORE" | "HOUR_BEFORE" | "FLOW_TRIGGER"
+  sentAt    DateTime    @default(now())
+  status    String      @default("SENT") // "SENT" | "FAILED"
+  error     String?
+}
