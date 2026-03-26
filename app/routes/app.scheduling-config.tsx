@@ -15,10 +15,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const [laboralConfig, festivoConfig, holidays] = await Promise.all([
+  const [laboralConfig, festivoConfig, holidays, blockedDays] = await Promise.all([
     prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "LABORAL" } }),
     prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "FESTIVO" } }),
     prisma.holiday.findMany({ where: { shop }, orderBy: { date: "asc" } }),
+    prisma.blockedDay.findMany({ where: { shop }, orderBy: { date: "asc" } }),
   ]);
 
   return {
@@ -28,6 +29,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ...h,
       date: h.date.toISOString(),
       createdAt: h.createdAt.toISOString(),
+    })),
+    blockedDays: blockedDays.map((b) => ({
+      ...b,
+      date: b.date.toISOString(),
+      createdAt: b.createdAt.toISOString(),
     })),
   };
 };
@@ -91,6 +97,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { success: true, intent };
   }
 
+  if (intent === "add-blocked-day") {
+    const rawDate = formData.get("date") as string;
+    const reason = (formData.get("reason") as string) ?? "";
+    const date = new Date(`${rawDate}T12:00:00.000Z`);
+
+    await prisma.blockedDay.upsert({
+      where: { shop_date: { shop, date } },
+      create: { shop, date, reason },
+      update: { reason },
+    });
+    return { success: true, intent };
+  }
+
+  if (intent === "delete-blocked-day") {
+    const id = formData.get("id") as string;
+    await prisma.blockedDay.delete({ where: { id } });
+    return { success: true, intent };
+  }
+
   return { success: false, intent };
 };
 
@@ -130,7 +155,7 @@ function formatHolidayDate(isoString: string) {
 }
 
 export default function SchedulingConfig() {
-  const { laboralConfig, festivoConfig, holidays } = useLoaderData<typeof loader>();
+  const { laboralConfig, festivoConfig, holidays, blockedDays } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher<typeof action>();
 
@@ -138,6 +163,8 @@ export default function SchedulingConfig() {
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayDesc, setNewHolidayDesc] = useState("");
   const [newHolidayPrice, setNewHolidayPrice] = useState("0");
+  const [newBlockedDate, setNewBlockedDate] = useState("");
+  const [newBlockedReason, setNewBlockedReason] = useState("");
 
   const selectedWorkDays = laboralConfig?.workDays?.split(",") ?? ["1", "2", "3", "4", "5"];
   const isSubmitting = fetcher.state !== "idle";
@@ -148,13 +175,15 @@ export default function SchedulingConfig() {
       "save-festivo": "Horario festivo guardado",
       "add-holiday": "Día festivo agregado",
       "delete-holiday": "Día festivo eliminado",
+      "add-blocked-day": "Día bloqueado correctamente",
+      "delete-blocked-day": "Bloqueo eliminado",
     };
     if (fetcher.data.intent && messages[fetcher.data.intent]) {
       shopify.toast.show(messages[fetcher.data.intent]);
     }
   }
 
-  const tabStyle = (tab: typeof activeTab): React.CSSProperties => ({
+  const tabStyle = (tab: "laboral" | "festivo" | "notifications"): React.CSSProperties => ({
     padding: "10px 20px",
     cursor: "pointer",
     border: "none",
@@ -253,6 +282,110 @@ export default function SchedulingConfig() {
             </s-button>
           </s-box>
         </fetcher.Form>
+      )}
+
+      {activeTab === "laboral" && (
+        <s-grid gridTemplateColumns="2fr 1fr" gap="base">
+          <s-grid-item>
+            <s-stack direction="block" gap="base">
+              <s-section heading="Días bloqueados">
+                <s-stack direction="block" gap="base">
+                  <s-paragraph>
+                    Bloquea días puntuales para que los clientes no puedan agendar en ellos. El motivo es solo visible para el administrador.
+                  </s-paragraph>
+
+                  <fetcher.Form method="post" style={{ display: "contents" }}>
+                    <input type="hidden" name="intent" value="add-blocked-day" />
+                    <s-stack direction="inline" gap="base">
+                      <s-date-field
+                        label="Fecha"
+                        name="date"
+                        value={newBlockedDate}
+                        onInput={(e: Event) =>
+                          setNewBlockedDate((e.target as HTMLInputElement).value)
+                        }
+                      />
+                      <s-text-field
+                        label="Motivo (interno)"
+                        name="reason"
+                        placeholder="Ej: Vacaciones, mantenimiento..."
+                        value={newBlockedReason}
+                        onInput={(e: Event) =>
+                          setNewBlockedReason((e.target as HTMLInputElement).value)
+                        }
+                      />
+                      <s-box padding="base">
+                        <s-button type="submit" variant="secondary" loading={isSubmitting}>
+                          Bloquear día
+                        </s-button>
+                      </s-box>
+                    </s-stack>
+                  </fetcher.Form>
+
+                  {blockedDays.length === 0 ? (
+                    <s-paragraph>No hay días bloqueados actualmente.</s-paragraph>
+                  ) : (
+                    <s-table>
+                      <s-table-header>
+                        <s-table-header-row>
+                          <s-table-cell>Fecha</s-table-cell>
+                          <s-table-cell>Motivo</s-table-cell>
+                          <s-table-cell></s-table-cell>
+                        </s-table-header-row>
+                      </s-table-header>
+                      <s-table-body>
+                        {blockedDays.map((bd) => (
+                          <s-table-row key={bd.id}>
+                            <s-table-cell>{formatHolidayDate(bd.date)}</s-table-cell>
+                            <s-table-cell>
+                              {bd.reason ? (
+                                <s-text>{bd.reason}</s-text>
+                              ) : (
+                                <s-text color="subdued">Sin motivo</s-text>
+                              )}
+                            </s-table-cell>
+                            <s-table-cell>
+                              <fetcher.Form method="post" style={{ display: "inline" }}>
+                                <input type="hidden" name="intent" value="delete-blocked-day" />
+                                <input type="hidden" name="id" value={bd.id} />
+                                <s-button
+                                  type="submit"
+                                  variant="tertiary"
+                                  tone="critical"
+                                  loading={isSubmitting}
+                                >
+                                  Eliminar
+                                </s-button>
+                              </fetcher.Form>
+                            </s-table-cell>
+                          </s-table-row>
+                        ))}
+                      </s-table-body>
+                    </s-table>
+                  )}
+                </s-stack>
+              </s-section>
+            </s-stack>
+          </s-grid-item>
+
+          <s-grid-item>
+            <s-section heading="¿Qué es un día bloqueado?">
+              <s-stack direction="block" gap="base">
+                <s-paragraph>
+                  Un día bloqueado cierra completamente la agenda: ningún cliente podrá agendar ese día desde su portal.
+                </s-paragraph>
+                <s-paragraph>
+                  A diferencia de los días no laborales (que dependen del horario semanal), aquí puedes bloquear días concretos de forma puntual: vacaciones, imprevistos, mantenimiento, etc.
+                </s-paragraph>
+                <s-banner tone="warning" heading="Agendamientos existentes">
+                  <s-paragraph>
+                    Bloquear un día no cancela automáticamente los servicios ya confirmados en esa fecha. Revisa el calendario antes de bloquearlo.
+                  </s-paragraph>
+                </s-banner>
+              </s-stack>
+            </s-section>
+          </s-grid-item>
+        </s-grid>
       )}
 
       {activeTab === "festivo" && (

@@ -11,24 +11,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const [upcomingSlots, totalPackages, packagesWithHours, hasConfig] = await Promise.all([
+  const [upcomingSlots, allPackages, hasConfig] = await Promise.all([
     prisma.bookingSlot.findMany({
       where: { shop, status: "CONFIRMED", date: { gte: today } },
       include: { package: true },
       orderBy: { date: "asc" },
       take: 5,
     }),
-    prisma.hourPackage.count({ where: { shop } }),
     prisma.hourPackage.findMany({
-      where: { shop },
-      select: { hoursTotal: true, hoursUsed: true },
+      where: { shop, expiresAt: { gt: today } },
+      select: { customerEmail: true, scheduleKind: true, hoursTotal: true, hoursUsed: true },
     }),
     prisma.scheduleConfig.findFirst({ where: { shop } }),
   ]);
 
-  const totalHoursPending = packagesWithHours.reduce(
-    (acc, p) => acc + (p.hoursTotal - p.hoursUsed), 0,
-  );
+  // Clientes únicos con bolsa activa
+  const uniqueClients = new Set(allPackages.map((p) => p.customerEmail.toLowerCase())).size;
+
+  // Horas por tipo
+  let laboralRemaining = 0, festivoRemaining = 0;
+  for (const p of allPackages) {
+    const r = p.hoursTotal - p.hoursUsed;
+    if (p.scheduleKind === "FESTIVO") festivoRemaining += r;
+    else laboralRemaining += r;
+  }
 
   return {
     upcomingSlots: upcomingSlots.map((s) => ({
@@ -41,13 +47,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       productTitle: s.package.productTitle,
       orderName: s.package.orderName,
       customerAddress: s.package.customerAddress,
+      scheduleKind: s.package.scheduleKind,
       isPrime: ((s.package as any).customerTags as string ?? "")
         .split(",")
         .map((t: string) => t.trim().toUpperCase())
         .includes("PRIME"),
     })),
-    totalPackages,
-    totalHoursPending,
+    uniqueClients,
+    laboralRemaining,
+    festivoRemaining,
     isConfigured: !!hasConfig,
   };
 };
@@ -59,7 +67,7 @@ function formatDate(isoDate: string) {
 }
 
 export default function Index() {
-  const { upcomingSlots, totalPackages, totalHoursPending, isConfigured } =
+  const { upcomingSlots, uniqueClients, laboralRemaining, festivoRemaining, isConfigured } =
     useLoaderData<typeof loader>();
 
   return (
@@ -80,12 +88,16 @@ export default function Index() {
             <s-section heading="Resumen">
               <s-stack direction="inline" gap="base">
                 <s-box padding="base" background="subdued">
-                  <s-paragraph>Paquetes activos</s-paragraph>
-                  <s-heading>{String(totalPackages)}</s-heading>
+                  <s-paragraph>Bolsas activas</s-paragraph>
+                  <s-heading>{String(uniqueClients)}</s-heading>
                 </s-box>
                 <s-box padding="base" background="subdued">
-                  <s-paragraph>Horas por usar</s-paragraph>
-                  <s-heading>{String(totalHoursPending)}h</s-heading>
+                  <s-paragraph>Horas laborales por usar</s-paragraph>
+                  <s-heading>{String(laboralRemaining)}h</s-heading>
+                </s-box>
+                <s-box padding="base" background="subdued">
+                  <s-paragraph>Horas festivas por usar</s-paragraph>
+                  <s-heading>{String(festivoRemaining)}h</s-heading>
                 </s-box>
                 <s-box padding="base" background="subdued">
                   <s-paragraph>Próximos servicios</s-paragraph>
@@ -102,6 +114,7 @@ export default function Index() {
                   <s-table-header-row>
                     <s-table-header listSlot="primary">Cliente</s-table-header>
                     <s-table-header listSlot="labeled">Servicio</s-table-header>
+                    <s-table-header listSlot="labeled">Tipo</s-table-header>
                     <s-table-header listSlot="labeled">Fecha del servicio</s-table-header>
                     <s-table-header listSlot="labeled">Dirección</s-table-header>
                     <s-table-header listSlot="inline">PRIME</s-table-header>
@@ -111,6 +124,11 @@ export default function Index() {
                       <s-table-row key={slot.id}>
                         <s-table-cell>{slot.customerName || slot.customerEmail}</s-table-cell>
                         <s-table-cell>{slot.productTitle}</s-table-cell>
+                        <s-table-cell>
+                          <s-badge tone={slot.scheduleKind === "FESTIVO" ? "caution" : "success"}>
+                            {slot.scheduleKind === "FESTIVO" ? "Festivo" : "Laboral"}
+                          </s-badge>
+                        </s-table-cell>
                         <s-table-cell>
                           {formatDate(slot.date)} · {slot.startTime} · {slot.hours}h
                         </s-table-cell>

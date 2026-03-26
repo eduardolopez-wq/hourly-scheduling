@@ -2,6 +2,8 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { redirect } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { getCalendarDayKindForDate } from "../calendar-day-kind.server";
+import { packageMatchesCalendarDay, type HourScheduleKind } from "../schedule-kind";
 
 /**
  * App Proxy: /apps/scheduling
@@ -87,6 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           id: true,
           orderName: true,
           productTitle: true,
+          scheduleKind: true,
           hoursTotal: true,
           hoursUsed: true,
           purchasedAt: true,
@@ -114,6 +117,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         id: p.id,
         orderName: p.orderName,
         productTitle: p.productTitle,
+        scheduleKind: p.scheduleKind,
         hoursTotal: p.hoursTotal,
         hoursUsed: p.hoursUsed,
         hoursRemaining: p.hoursTotal - p.hoursUsed,
@@ -148,6 +152,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: pkg.id,
       orderName: pkg.orderName,
       productTitle: pkg.productTitle,
+      scheduleKind: pkg.scheduleKind,
       customerName: pkg.customerName,
       hoursTotal: pkg.hoursTotal,
       hoursUsed: pkg.hoursUsed,
@@ -177,10 +182,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const year = parseInt(url.searchParams.get("year") ?? String(now.getFullYear()));
     const month = parseInt(url.searchParams.get("month") ?? String(now.getMonth()));
 
-    const [laboralConfig, festivoConfig, holidays, existingSlots] = await Promise.all([
+    const [laboralConfig, festivoConfig, holidays, blockedDays, existingSlots] = await Promise.all([
       prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "LABORAL" } }),
       prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "FESTIVO" } }),
       prisma.holiday.findMany({
+        where: {
+          shop,
+          date: { gte: new Date(year, month, 1), lte: new Date(year, month + 1, 0, 23, 59, 59) },
+        },
+      }),
+      prisma.blockedDay.findMany({
         where: {
           shop,
           date: { gte: new Date(year, month, 1), lte: new Date(year, month + 1, 0, 23, 59, 59) },
@@ -201,6 +212,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const daysCount = getDaysInMonth(year, month);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const pkgKind = pkg.scheduleKind as HourScheduleKind;
 
     const availableDays = [];
 
@@ -211,6 +223,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const dayOfWeek = date.getDay() === 0 ? 7 : date.getDay();
       const isoDate = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       const holiday = holidays.find((h) => h.date.toISOString().slice(0, 10) === isoDate);
+      const blocked = blockedDays.some((b) => b.date.toISOString().slice(0, 10) === isoDate);
+      if (blocked) continue;
 
       let dayType: "laboral" | "festivo" | null = null;
       let config = laboralConfig;
@@ -223,6 +237,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
 
       if (!dayType) continue;
+      if (dayType === "festivo" && pkgKind !== "FESTIVO") continue;
+      if (dayType === "laboral" && pkgKind !== "LABORAL") continue;
 
       const slots = generateTimeSlots(config.startHour, config.endHour, config.slotDuration);
       const occupiedSlots = existingSlots
@@ -271,6 +287,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (act === "create-slot") {
     const { date: rawDate, startTime, hours = 1, notes = "" } = body;
     if (!rawDate || !startTime) return json({ error: "Fecha y hora requeridas" }, 400);
+
+    const blockedDateCheck = new Date(`${rawDate}T12:00:00.000Z`);
+    const blockedMatch = await prisma.blockedDay.findFirst({
+      where: { shop, date: blockedDateCheck },
+    });
+    if (blockedMatch) {
+      return json({ error: "Este día no está disponible para agendar." }, 400);
+    }
+
+    const dayKind = await getCalendarDayKindForDate(shop, rawDate);
+    if (dayKind === "NO_DISPONIBLE") {
+      return json({ error: "Este día no está disponible en el calendario." }, 400);
+    }
+    const pkgKind = pkg.scheduleKind as HourScheduleKind;
+    if (!packageMatchesCalendarDay(pkgKind, dayKind)) {
+      return json(
+        {
+          error:
+            dayKind === "FESTIVO"
+              ? "Día festivo: solo puedes usar horas compradas como Festivos."
+              : "Día laboral: solo puedes usar horas compradas como Laborales.",
+        },
+        400,
+      );
+    }
 
     if (hours < 3) {
       return json({ error: "Cada servicio debe ser de al menos 3h.", }, 400);

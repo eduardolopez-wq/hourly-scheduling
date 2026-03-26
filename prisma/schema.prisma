@@ -60,27 +60,30 @@ model Holiday {
 
 // Paquete de horas comprado por el cliente en una orden
 model HourPackage {
-  id              String    @id @default(cuid())
-  shop            String
-  orderId         String
-  orderName       String    @default("")
-  productId       String
-  productTitle    String    @default("")
-  customerEmail   String
-  customerName    String    @default("")
-  customerId      String    @default("") // Shopify customer GID
-  customerAddress String    @default("") // Dirección completa para mostrar en admin
-  customerTags    String    @default("") // Tags del cliente (ej. "PRIME,VIP") separados por coma
-  hoursTotal      Int                     // total de horas compradas
-  hoursUsed       Int       @default(0)  // horas ya agendadas
-  purchasedAt     DateTime  @default(now())
-  expiresAt       DateTime               // purchasedAt + 1 año
-  accessToken     String    @default("") // token único para el portal del cliente
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  slots           BookingSlot[]
+  id               String    @id @default(cuid())
+  shop             String
+  orderId          String
+  orderLineItemId  String    @default("") // id de línea en Shopify (único por ítem dentro del pedido)
+  orderName        String    @default("")
+  productId        String
+  productTitle     String    @default("")
+  variantId        String    @default("")
+  scheduleKind     String    @default("LABORAL") // "LABORAL" | "FESTIVO" (opción Horario de la variante)
+  customerEmail    String
+  customerName     String    @default("")
+  customerId       String    @default("") // Shopify customer GID
+  customerAddress  String    @default("") // Dirección completa para mostrar en admin
+  customerTags     String    @default("") // Tags del cliente (ej. "PRIME,VIP") separados por coma
+  hoursTotal       Int                     // total de horas compradas
+  hoursUsed        Int       @default(0)  // horas ya agendadas
+  purchasedAt      DateTime  @default(now())
+  expiresAt        DateTime               // purchasedAt + 1 año
+  accessToken      String    @default("") // token único para el portal del cliente
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  slots            BookingSlot[]
 
-  @@unique([shop, orderId])
+  @@unique([shop, orderId, orderLineItemId])
 }
 
 // Slot de servicio agendado dentro de un paquete
@@ -97,6 +100,17 @@ model BookingSlot {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   notifications NotificationLog[]
+}
+
+// Día completamente bloqueado: ningún cliente puede agendar ese día
+model BlockedDay {
+  id          String   @id @default(cuid())
+  shop        String
+  date        DateTime
+  reason      String   @default("") // motivo visible internamente (no se muestra al cliente)
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, date])
 }
 
 model NotificationLog {

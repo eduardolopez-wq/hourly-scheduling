@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -9,6 +9,12 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { getCalendarDayKindForDate } from "../calendar-day-kind.server";
+import {
+  packageMatchesCalendarDay,
+  packageMatchesPortalCalendarDay,
+  type HourScheduleKind,
+} from "../schedule-kind";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -22,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startOfMonth = new Date(year, month, 1);
   const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
 
-  const [laboralConfig, festivoConfig, holidays, slots, packages] = await Promise.all([
+  const [laboralConfig, festivoConfig, holidays, slots, packages, blockedDays] = await Promise.all([
     prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "LABORAL" } }),
     prisma.scheduleConfig.findFirst({ where: { shop, scheduleType: "FESTIVO" } }),
     prisma.holiday.findMany({
@@ -38,6 +44,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       orderBy: { purchasedAt: "desc" },
       take: 50,
     }),
+    prisma.blockedDay.findMany({
+      where: { shop, date: { gte: startOfMonth, lte: endOfMonth } },
+    }),
   ]);
 
   return {
@@ -47,6 +56,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     laboralConfig,
     festivoConfig,
     holidays: holidays.map((h) => ({ ...h, date: h.date.toISOString(), createdAt: h.createdAt.toISOString() })),
+    blockedDays: blockedDays.map((b) => ({ ...b, date: b.date.toISOString(), createdAt: b.createdAt.toISOString() })),
     slots: slots.map((s) => ({
       id: s.id,
       date: s.date.toISOString().slice(0, 10),
@@ -66,6 +76,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       customerName: p.customerName,
       customerEmail: p.customerEmail,
       productTitle: p.productTitle,
+      scheduleKind: p.scheduleKind as HourScheduleKind,
       hoursTotal: p.hoursTotal,
       hoursUsed: p.hoursUsed,
       hoursRemaining: p.hoursTotal - p.hoursUsed,
@@ -92,6 +103,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const rawDate = formData.get("date") as string;
+    const dayKind = await getCalendarDayKindForDate(shop, rawDate);
+    if (dayKind === "BLOQUEADO") {
+      return { success: false, error: "Este día está bloqueado. Desbloquéalo en Configuración o elige otra fecha." };
+    }
+    if (dayKind === "NO_DISPONIBLE") {
+      return { success: false, error: "Este día no es agendable en el calendario laboral." };
+    }
+    if (!packageMatchesCalendarDay(pkg.scheduleKind as HourScheduleKind, dayKind)) {
+      return {
+        success: false,
+        error:
+          dayKind === "FESTIVO"
+            ? "Día festivo: solo paquetes con horas Festivas."
+            : "Día laboral: solo paquetes con horas Laborales.",
+      };
+    }
     const slot = await prisma.bookingSlot.create({
       data: {
         shop,
@@ -152,6 +179,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const newDate = new Date(`${rawDate}T12:00:00.000Z`);
+    const newDayKind = await getCalendarDayKindForDate(shop, rawDate);
+    if (newDayKind === "BLOQUEADO") {
+      return { success: false, error: "No puedes mover el servicio a un día bloqueado." };
+    }
+    if (newDayKind === "NO_DISPONIBLE") {
+      return { success: false, error: "La nueva fecha no es un día disponible en el calendario." };
+    }
+    if (!packageMatchesCalendarDay(pkg.scheduleKind as HourScheduleKind, newDayKind)) {
+      return {
+        success: false,
+        error:
+          newDayKind === "FESTIVO"
+            ? "Esa fecha es festiva: el paquete del cliente es de horas laborales."
+            : "Esa fecha es laboral: el paquete del cliente es de horas festivas.",
+      };
+    }
+
     const hoursDelta = hours - slot.hours;
 
     await prisma.bookingSlot.update({
@@ -218,7 +262,7 @@ const MONTH_NAMES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
 const DAY_NAMES = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 
 export default function Calendar() {
-  const { shop, year, month, laboralConfig, festivoConfig, holidays, slots, packages } = useLoaderData<typeof loader>();
+  const { shop, year, month, laboralConfig, festivoConfig, holidays, blockedDays, slots, packages } = useLoaderData<typeof loader>();
   const [, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
@@ -229,14 +273,27 @@ export default function Calendar() {
   const [activeTab, setActiveTab] = useState<"calendar" | "packages">("calendar");
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
 
-  if (fetcher.data?.success && fetcher.state === "idle") {
-    if (fetcher.data.intent === "create-slot") { shopify.toast.show("Agendamiento creado"); setShowForm(false); setSelectedDay(null); }
-    if (fetcher.data.intent === "update-slot") { shopify.toast.show("Agendamiento actualizado. Se enviará confirmación al cliente."); setEditingSlotId(null); }
-    if (fetcher.data.intent === "cancel-slot") shopify.toast.show("Agendamiento cancelado");
-  }
-  if (fetcher.data?.error && fetcher.state === "idle" && typeof fetcher.data.error === "string") {
-    shopify.toast.show(fetcher.data.error, { isError: true });
-  }
+  useEffect(() => {
+    if (fetcher.state !== "idle") return;
+    if (fetcher.data?.success) {
+      if (fetcher.data.intent === "create-slot") {
+        shopify.toast.show("Agendamiento creado");
+        setShowForm(false);
+        setSelectedDay(null);
+      }
+      if (fetcher.data.intent === "update-slot") {
+        shopify.toast.show("Agendamiento actualizado. Se enviará confirmación al cliente.");
+        setEditingSlotId(null);
+      }
+      if (fetcher.data.intent === "cancel-slot") {
+        shopify.toast.show("Agendamiento cancelado");
+      }
+    }
+    if (fetcher.data?.error && typeof fetcher.data.error === "string") {
+      shopify.toast.show(fetcher.data.error, { isError: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data]);
 
   const navigateMonth = (delta: number) => {
     let m = month + delta, y = year;
@@ -254,11 +311,13 @@ export default function Calendar() {
     const dow = new Date(year, month, day).getDay();
     const dayOfWeek = dow === 0 ? 7 : dow;
     const holiday = holidays.find((h) => h.date.startsWith(isoDate));
+    const blocked = blockedDays.find((b) => b.date.startsWith(isoDate));
     const daySlots = slots.filter((s) => s.date === isoDate);
-    let type: "laboral" | "festivo" | "noDisponible" = "noDisponible";
-    if (holiday) type = "festivo";
+    let type: "laboral" | "festivo" | "noDisponible" | "bloqueado" = "noDisponible";
+    if (blocked) type = "bloqueado";
+    else if (holiday) type = "festivo";
     else if (workDays.includes(dayOfWeek)) type = "laboral";
-    return { isoDate, type, holiday, slotsCount: daySlots.length };
+    return { isoDate, type, holiday, blocked, slotsCount: daySlots.length };
   };
 
   const selectedIsoDate = selectedDay;
@@ -302,7 +361,7 @@ export default function Calendar() {
 
               <s-box padding="base">
                 <s-stack direction="inline" gap="base">
-                  {[["#f0faf7","#b8e0d4","Laboral"],["#fff4e5","#f4c07a","Festivo"],["#f4f6f8","#e0e0e0","No disponible"]].map(([bg,bd,label]) => (
+                  {[["#f0faf7","#b8e0d4","Laboral"],["#fff4e5","#f4c07a","Festivo"],["#f4f6f8","#e0e0e0","No disponible"],["#fce8e8","#e8a0a0","Bloqueado"]].map(([bg,bd,label]) => (
                     <s-stack key={label} direction="inline" gap="small" alignItems="center">
                       <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, border: `1px solid ${bd}`, display: "inline-block" }} />
                       <s-text>{label}</s-text>
@@ -324,7 +383,8 @@ export default function Calendar() {
                     let bg = "#f4f6f8", border = "1px solid transparent", color = "#aaa", cursor = "pointer";
                     if (info.type === "laboral") { bg = "#f0faf7"; border = "1px solid #b8e0d4"; color = "#1a1a1a"; }
                     else if (info.type === "festivo") { bg = "#fff4e5"; border = "1px solid #f4c07a"; color = "#1a1a1a"; }
-                    if (isSelected) { bg = info.type === "festivo" ? "#ffe8c0" : "#d4efe7"; border = "2px solid #008060"; }
+                    else if (info.type === "bloqueado") { bg = "#fce8e8"; border = "1px solid #e8a0a0"; color = "#8b0000"; }
+                    if (isSelected) { bg = info.type === "festivo" ? "#ffe8c0" : info.type === "bloqueado" ? "#f5c6c6" : "#d4efe7"; border = `2px solid ${info.type === "bloqueado" ? "#c0392b" : "#008060"}`; }
                     if (isToday && !isSelected) border = "2px solid #005c45";
                     return (
                       <div key={day} onClick={() => { setSelectedDay(info.isoDate); setShowForm(false); setSelectedPackageId(""); setEditingSlotId(null); }}
@@ -334,6 +394,9 @@ export default function Calendar() {
                           <div style={{ fontSize: "9px", color: "#c05c00", fontWeight: 600 }}>
                             {info.holiday.priceExtra > 0 ? `+€${info.holiday.priceExtra}/h` : "Festivo"}
                           </div>
+                        )}
+                        {info.type === "bloqueado" && (
+                          <div style={{ fontSize: "9px", color: "#8b0000", fontWeight: 700 }}>🔒 Bloqueado</div>
                         )}
                         {info.slotsCount > 0 && (
                           <div style={{ position: "absolute", bottom: 3, right: 3, background: "#008060", color: "#fff", borderRadius: "10px", fontSize: "9px", padding: "1px 5px", fontWeight: 700 }}>
@@ -364,12 +427,21 @@ export default function Calendar() {
                     </s-banner>
                   )}
 
+                  {selectedDayInfo?.type === "bloqueado" && (
+                    <s-banner tone="critical" heading="Día bloqueado">
+                      <s-paragraph>
+                        Los clientes no pueden agendar este día.
+                        {selectedDayInfo.blocked?.reason ? ` Motivo: ${selectedDayInfo.blocked.reason}` : ""}
+                      </s-paragraph>
+                    </s-banner>
+                  )}
+
                   <s-section heading={selectedDay}>
                     <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                      <s-badge tone={selectedDayInfo?.type === "festivo" ? "caution" : "success"}>
-                        {selectedDayInfo?.type === "festivo" ? "Festivo" : "Laboral"}
+                      <s-badge tone={selectedDayInfo?.type === "bloqueado" ? "critical" : selectedDayInfo?.type === "festivo" ? "caution" : selectedDayInfo?.type === "laboral" ? "success" : "info"}>
+                        {selectedDayInfo?.type === "bloqueado" ? "Bloqueado" : selectedDayInfo?.type === "festivo" ? "Festivo" : selectedDayInfo?.type === "laboral" ? "Laboral" : "No disponible"}
                       </s-badge>
-                      {!showForm && (
+                      {!showForm && selectedDayInfo?.type !== "bloqueado" && (
                         <s-button variant="primary" onClick={() => setShowForm(true)}>+ Agendar</s-button>
                       )}
                     </s-stack>
@@ -388,12 +460,32 @@ export default function Calendar() {
                             onChange={(e: Event) => setSelectedPackageId((e.target as HTMLSelectElement).value)}
                           >
                             <s-option value="">Seleccionar paquete...</s-option>
-                            {packages.filter((p) => p.hoursRemaining > 0).map((p) => (
+                            {packages.filter(
+                              (p) =>
+                                p.hoursRemaining > 0 &&
+                                selectedDayInfo &&
+                                packageMatchesPortalCalendarDay(p.scheduleKind, selectedDayInfo.type),
+                            ).map((p) => (
                               <s-option key={p.id} value={p.id}>
-                                {p.orderName} — {p.customerName || p.customerEmail} ({p.hoursRemaining}h disponibles)
+                                {p.orderName} — {p.customerName || p.customerEmail} ({p.hoursRemaining}h ·{" "}
+                                {p.scheduleKind === "FESTIVO" ? "Festivas" : "Laborales"})
                               </s-option>
                             ))}
                           </s-select>
+
+                          {selectedDayInfo &&
+                            showForm &&
+                            !packages.some(
+                              (p) =>
+                                p.hoursRemaining > 0 &&
+                                packageMatchesPortalCalendarDay(p.scheduleKind, selectedDayInfo.type),
+                            ) && (
+                            <s-banner tone="warning">
+                              No hay paquetes con saldo para este tipo de día (
+                              {selectedDayInfo.type === "festivo" ? "festivo — necesitas bolsa Festivas" : "laboral — necesitas bolsa Laborales"}
+                              ).
+                            </s-banner>
+                          )}
 
                           {selectedPackage && (
                             <>
