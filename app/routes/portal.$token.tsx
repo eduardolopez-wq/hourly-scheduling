@@ -108,9 +108,13 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     ? `${storeUrl}/products/${extractProductNumericId(festivoProductId)}`
     : storeUrl;
 
+  // Logo local (servido desde `public/`) para evitar fallos de carga desde el CDN de Shopify.
+  const logoUrl = "/logo-plancha-y-limpieza.svg";
+
   return {
     token,
     storeUrl,
+    logoUrl,
     laboralProductUrl,
     festivoProductUrl,
     customer: {
@@ -369,6 +373,7 @@ export default function SchedulingPortal() {
   const {
     token,
     storeUrl,
+    logoUrl,
     laboralProductUrl,
     festivoProductUrl,
     customer,
@@ -498,22 +503,77 @@ export default function SchedulingPortal() {
 
       {/* Top bar */}
       <div style={{ background: "#fff", borderBottom: "1px solid #e8e8e8", padding: "0 24px" }}>
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: "60px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div style={{ width: 32, height: 32, borderRadius: "8px", background: "#008060", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ color: "#fff", fontSize: "16px" }}>⏱</span>
+        <div
+          style={{
+            maxWidth: "1100px",
+            margin: "0 auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "20px",
+            minHeight: "72px",
+            padding: "14px 0",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "20px",
+              flex: "1 1 auto",
+              minWidth: 0,
+            }}
+          >
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+              <img
+                src={logoUrl}
+                alt="Logo Plancha & Limpieza"
+                style={{ height: "40px", width: "auto", maxWidth: "min(220px, 42vw)", objectFit: "contain", display: "block" }}
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
             </div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "15px", lineHeight: 1.2 }}>Bolsa de horas</div>
-              {customer.name && <div style={{ fontSize: "12px", color: "#6d7175" }}>{customer.name}</div>}
+            <div
+              aria-hidden
+              style={{
+                width: "1px",
+                height: "40px",
+                background: "#d9d9d9",
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: 0, paddingLeft: "2px" }}>
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: "16px",
+                  lineHeight: 1.25,
+                  letterSpacing: "-0.02em",
+                  color: "#1a1a1a",
+                }}
+              >
+                Bolsa de horas
+              </div>
+              {customer.name && (
+                <div style={{ fontSize: "13px", color: "#6d7175", lineHeight: 1.3 }}>
+                  {customer.name}
+                </div>
+              )}
             </div>
           </div>
           <a
             href={storeUrl}
             style={{
-              display: "inline-flex", alignItems: "center", gap: "6px",
-              padding: "8px 16px", background: "#f3f3f3", color: "#1a1a1a",
-              borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 500,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              flexShrink: 0,
+              padding: "10px 16px",
+              background: "#f3f3f3",
+              color: "#1a1a1a",
+              borderRadius: "8px",
+              textDecoration: "none",
+              fontSize: "13px",
+              fontWeight: 500,
               border: "1px solid #e0e0e0",
             }}
           >
