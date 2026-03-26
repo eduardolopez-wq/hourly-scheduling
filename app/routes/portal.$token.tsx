@@ -62,14 +62,18 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
 
   let laboralTotal = 0, laboralUsed = 0;
   let festivoTotal = 0, festivoUsed = 0;
+  let laboralProductId: string | null = null;
+  let festivoProductId: string | null = null;
 
   for (const p of allPackages) {
     if (p.scheduleKind === "FESTIVO") {
       festivoTotal += p.hoursTotal;
       festivoUsed += p.hoursUsed;
+      if (!festivoProductId && p.productId) festivoProductId = p.productId;
     } else {
       laboralTotal += p.hoursTotal;
       laboralUsed += p.hoursUsed;
+      if (!laboralProductId && p.productId) laboralProductId = p.productId;
     }
   }
 
@@ -92,9 +96,23 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
 
   const storeUrl = anchor.shop.startsWith("http") ? anchor.shop : `https://${anchor.shop}`;
 
+  // Construir URLs de producto usando el handle (Shopify numeric ID → /products/<id>)
+  // Si el productId es un GID como "gid://shopify/Product/123", extraemos el número.
+  const extractProductNumericId = (gid: string) =>
+    gid.includes("/") ? gid.split("/").pop() ?? gid : gid;
+
+  const laboralProductUrl = laboralProductId
+    ? `${storeUrl}/products/${extractProductNumericId(laboralProductId)}`
+    : storeUrl;
+  const festivoProductUrl = festivoProductId
+    ? `${storeUrl}/products/${extractProductNumericId(festivoProductId)}`
+    : storeUrl;
+
   return {
     token,
     storeUrl,
+    laboralProductUrl,
+    festivoProductUrl,
     customer: {
       name: anchor.customerName,
       email: anchor.customerEmail,
@@ -351,6 +369,8 @@ export default function SchedulingPortal() {
   const {
     token,
     storeUrl,
+    laboralProductUrl,
+    festivoProductUrl,
     customer,
     totals,
     confirmedSlots,
@@ -468,364 +488,541 @@ export default function SchedulingPortal() {
 
   const allExpiredOrEmpty = totals.laboralRemaining === 0 && totals.festivoRemaining === 0;
 
+  const isFestivo = selectedDayInfo?.type === "festivo";
+  const accentColor = isFestivo ? "#c05c00" : "#008060";
+  const accentBg = isFestivo ? "#fff4e5" : "#f0faf7";
+  const accentBorder = isFestivo ? "#f4c07a" : "#b8e0d4";
+
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: "960px", margin: "0 auto", padding: "24px 16px", color: "#1a1a1a" }}>
+    <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: "100vh", background: "#f7f8fa", color: "#1a1a1a" }}>
 
-      {/* Cabecera */}
-      <div style={{ marginBottom: "24px", display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
-        <div>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 4px" }}>Bolsa de horas</h1>
-          {customer.name && (
-            <p style={{ color: "#6d7175", margin: 0, fontSize: "15px" }}>{customer.name}</p>
-          )}
-        </div>
-        <a
-          href={storeUrl}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: "6px",
-            padding: "10px 16px", background: "#1a1a1a", color: "#fff", borderRadius: "8px",
-            textDecoration: "none", fontSize: "14px", fontWeight: 500,
-          }}
-        >
-          ← Volver a la tienda
-        </a>
-      </div>
-
-      {allExpiredOrEmpty && (
-        <div style={{ background: "#fff4e5", border: "1px solid #f4c07a", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
-          <strong>⚠️ Sin horas disponibles.</strong> Tus bolsas de horas están vacías o han expirado.
-          Contacta con nosotros para recargar.
-        </div>
-      )}
-
-      {/* Resumen de horas */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "28px" }}>
-        {[
-          {
-            label: "Horas laborales disponibles",
-            value: `${totals.laboralRemaining}h`,
-            sub: `${totals.laboralUsed}h usadas de ${totals.laboralTotal}h`,
-            color: "#008060",
-            bg: "#f0faf7",
-            border: "#b8e0d4",
-          },
-          {
-            label: "Horas festivas disponibles",
-            value: `${totals.festivoRemaining}h`,
-            sub: `${totals.festivoUsed}h usadas de ${totals.festivoTotal}h`,
-            color: "#c05c00",
-            bg: "#fff9f0",
-            border: "#f4c07a",
-          },
-          {
-            label: "Próxima expiración",
-            value: allExpiredOrEmpty ? "—" : `${totals.daysUntilNextExpiry} días`,
-            sub: "del paquete con saldo más antiguo",
-            color: totals.daysUntilNextExpiry < 30 ? "#d72c0d" : "#1a1a1a",
-            bg: "#f6f6f7",
-            border: "#e0e0e0",
-          },
-        ].map((stat) => (
-          <div
-            key={stat.label}
-            style={{ background: stat.bg, border: `1px solid ${stat.border}`, borderRadius: "8px", padding: "16px" }}
+      {/* Top bar */}
+      <div style={{ background: "#fff", borderBottom: "1px solid #e8e8e8", padding: "0 24px" }}>
+        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: "60px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "8px", background: "#008060", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ color: "#fff", fontSize: "16px" }}>⏱</span>
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "15px", lineHeight: 1.2 }}>Bolsa de horas</div>
+              {customer.name && <div style={{ fontSize: "12px", color: "#6d7175" }}>{customer.name}</div>}
+            </div>
+          </div>
+          <a
+            href={storeUrl}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: "6px",
+              padding: "8px 16px", background: "#f3f3f3", color: "#1a1a1a",
+              borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 500,
+              border: "1px solid #e0e0e0",
+            }}
           >
-            <div style={{ fontSize: "12px", color: "#6d7175", marginBottom: "4px" }}>{stat.label}</div>
-            <div style={{ fontSize: "26px", fontWeight: 700, color: stat.color, lineHeight: 1.1 }}>{stat.value}</div>
-            <div style={{ fontSize: "11px", color: "#8c9196", marginTop: "4px" }}>{stat.sub}</div>
-          </div>
-        ))}
+            ← Volver a la tienda
+          </a>
+        </div>
       </div>
 
-      {!laboralConfig && (
-        <div style={{ background: "#fff4e5", border: "1px solid #f4c07a", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
-          La tienda aún no tiene horarios configurados. Contacta con nosotros para más información.
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "28px 24px" }}>
+
+        {/* Aviso informativo */}
+        <div style={{
+          background: "#fffbf0", border: "1px solid #f4c07a", borderRadius: "10px",
+          padding: "14px 18px", marginBottom: "24px",
+          display: "flex", gap: "10px", alignItems: "flex-start", fontSize: "13px", color: "#7a4e00",
+        }}>
+          <span style={{ fontSize: "16px", flexShrink: 0 }}>ℹ️</span>
+          <span>Para poblaciones de menos de 100.000 habitantes, requerimos un preaviso mínimo de 6 horas hábiles, con un plazo estándar de gestión de 48 horas hábiles.</span>
         </div>
-      )}
 
-      {laboralConfig && !allExpiredOrEmpty && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "24px" }}>
-
-          {/* Calendario */}
-          <div style={{ background: "#fff", border: "1px solid #e0e0e0", borderRadius: "10px", padding: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <button onClick={() => navigateMonth(-1)} style={{ background: "none", border: "1px solid #e0e0e0", borderRadius: "6px", padding: "6px 14px", cursor: "pointer" }}>←</button>
-              <strong style={{ fontSize: "16px" }}>{MONTH_NAMES[month]} {year}</strong>
-              <button onClick={() => navigateMonth(1)} style={{ background: "none", border: "1px solid #e0e0e0", borderRadius: "6px", padding: "6px 14px", cursor: "pointer" }}>→</button>
-            </div>
-
-            {/* Leyenda */}
-            <div style={{ display: "flex", gap: "12px", marginBottom: "12px", fontSize: "11px", flexWrap: "wrap" }}>
-              {[
-                { color: "#f0faf7", border: "#b8e0d4", label: "Laboral disponible" },
-                { color: "#fff4e5", border: "#f4c07a", label: "Festivo disponible" },
-                { color: "#ececec", border: "#bbb", label: "Sin saldo del tipo" },
-                { color: "#fce8e8", border: "#e8a0a0", label: "Cerrado / bloqueado" },
-              ].map((l) => (
-                <span key={l.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  <span style={{ width: 11, height: 11, borderRadius: 3, background: l.color, border: `1px solid ${l.border}`, display: "inline-block" }} />
-                  {l.label}
-                </span>
-              ))}
-            </div>
-
-            {/* Grid días */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "3px" }}>
-              {DAY_NAMES.map((n) => (
-                <div key={n} style={{ textAlign: "center", fontSize: "12px", fontWeight: 600, color: "#6d7175", padding: "6px 0" }}>{n}</div>
-              ))}
-              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={`e-${i}`} />)}
-              {Array.from({ length: daysCount }, (_, i) => i + 1).map((day) => {
-                const info = getDayInfo(day);
-                const isSelected = selectedDay === info.isoDate;
-                const isToday = new Date(year, month, day).toDateString() === new Date().toDateString();
-                const agendable = dayIsAgendable(info);
-
-                let bg = "#f4f6f8", border = "1px solid transparent", color = "#aaa", cursor = "default";
-
-                if (info.type === "laboral") {
-                  if (agendable) { bg = "#f0faf7"; border = "1px solid #b8e0d4"; color = "#1a1a1a"; cursor = "pointer"; }
-                  else { bg = "#ececec"; border = "1px solid #bbb"; color = "#888"; cursor = "not-allowed"; }
-                } else if (info.type === "festivo") {
-                  if (agendable) { bg = "#fff4e5"; border = "1px solid #f4c07a"; color = "#1a1a1a"; cursor = "pointer"; }
-                  else { bg = "#ececec"; border = "1px solid #bbb"; color = "#888"; cursor = "not-allowed"; }
-                } else if (info.type === "bloqueado") {
-                  bg = "#fce8e8"; border = "1px solid #e8a0a0"; color = "#8b0000"; cursor = "not-allowed";
-                }
-
-                if (isSelected) { bg = info.type === "festivo" ? "#ffe8c0" : "#d4efe7"; border = "2px solid #008060"; }
-                if (isToday && !isSelected) border = "2px solid #005c45";
-
-                return (
-                  <div
-                    key={day}
-                    onClick={() => {
-                      if (info.type === "noDisponible" || info.type === "pasado" || info.type === "bloqueado") return;
-                      if (!agendable) return;
-                      setSelectedDay(info.isoDate);
-                      setShowForm(false);
-                      setFormError("");
+        {allExpiredOrEmpty && (
+          <div style={{
+            background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px",
+            padding: "24px", marginBottom: "24px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+          }}>
+            <div style={{ display: "flex", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ fontSize: "36px" }}>🛒</div>
+              <div style={{ flex: 1, minWidth: "220px" }}>
+                <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "6px" }}>
+                  No tienes horas disponibles
+                </div>
+                <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "16px" }}>
+                  Tus bolsas de horas están vacías o han expirado. Adquiere más horas para continuar agendando tus servicios.
+                </div>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                  <a
+                    href={laboralProductUrl}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: "6px",
+                      padding: "9px 18px", background: "#008060", color: "#fff",
+                      borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 600,
                     }}
-                    style={{ position: "relative", minHeight: "52px", padding: "6px", borderRadius: "6px", background: bg, border, cursor, transition: "all 0.12s" }}
                   >
-                    <div style={{ fontSize: "13px", fontWeight: isToday ? 700 : 400, color }}>{day}</div>
-                    {info.type === "festivo" && info.holiday && (
-                      <div style={{ fontSize: "9px", color: "#c05c00", fontWeight: 600 }}>
-                        {info.holiday.priceExtra > 0 ? `+€${info.holiday.priceExtra}/h` : "Festivo"}
-                      </div>
-                    )}
-                    {info.type === "bloqueado" && (
-                      <div style={{ fontSize: "9px", color: "#8b0000", fontWeight: 700 }}>🔒</div>
-                    )}
-                    {(info.type === "laboral" || info.type === "festivo") && !agendable && (
-                      <div style={{ fontSize: "8px", color: "#888" }}>sin saldo</div>
-                    )}
-                    {info.slotsCount > 0 && (
-                      <div style={{ position: "absolute", bottom: 3, right: 3, background: "#008060", color: "#fff", borderRadius: "10px", fontSize: "9px", padding: "1px 5px", fontWeight: 700 }}>
-                        {info.slotsCount}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                    💼 Comprar horas laborales
+                  </a>
+                  <a
+                    href={festivoProductUrl}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: "6px",
+                      padding: "9px 18px", background: "#fff4e5", color: "#c05c00",
+                      border: "1px solid #f4c07a", borderRadius: "8px",
+                      textDecoration: "none", fontSize: "13px", fontWeight: 600,
+                    }}
+                  >
+                    🎉 Comprar horas festivas
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Panel lateral */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {!selectedDay ? (
-              <div style={{ background: "#f6f6f7", borderRadius: "10px", padding: "20px", color: "#6d7175" }}>
-                Selecciona un día disponible del calendario para agendar horas.
+        {/* Tarjetas de resumen */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "28px" }}>
+          {[
+            {
+              label: "Horas laborales",
+              value: `${totals.laboralRemaining}h`,
+              sub: `${totals.laboralUsed}h usadas de ${totals.laboralTotal}h`,
+              accent: "#008060", bg: "#f0faf7", border: "#b8e0d4",
+              icon: "💼",
+            },
+            {
+              label: "Horas festivas",
+              value: `${totals.festivoRemaining}h`,
+              sub: `${totals.festivoUsed}h usadas de ${totals.festivoTotal}h`,
+              accent: "#c05c00", bg: "#fff9f0", border: "#f4c07a",
+              icon: "🎉",
+            },
+            {
+              label: "Próxima expiración",
+              value: allExpiredOrEmpty ? "—" : `${totals.daysUntilNextExpiry} días`,
+              sub: "del paquete más próximo",
+              accent: totals.daysUntilNextExpiry < 30 ? "#d72c0d" : "#3a3a3a",
+              bg: "#f6f6f7", border: "#e0e0e0",
+              icon: "📅",
+            },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              style={{
+                background: stat.bg, border: `1px solid ${stat.border}`,
+                borderRadius: "12px", padding: "20px",
+                display: "flex", flexDirection: "column", gap: "6px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "18px" }}>{stat.icon}</span>
+                <span style={{ fontSize: "12px", color: "#6d7175", fontWeight: 500 }}>{stat.label}</span>
               </div>
-            ) : (
-              <>
-                {selectedDayInfo?.type === "festivo" && selectedDayInfo.holiday && selectedDayInfo.holiday.priceExtra > 0 && (
-                  <div style={{ background: "#fff4e5", border: "1px solid #f4c07a", borderRadius: "8px", padding: "14px" }}>
-                    <strong>Día festivo: {selectedDayInfo.holiday.description}</strong><br />
-                    <span style={{ fontSize: "14px" }}>
-                      Precio extra: <strong>+€{selectedDayInfo.holiday.priceExtra.toFixed(2)}/hora</strong>
-                    </span>
-                  </div>
-                )}
+              <div style={{ fontSize: "30px", fontWeight: 800, color: stat.accent, lineHeight: 1 }}>{stat.value}</div>
+              <div style={{ fontSize: "11px", color: "#8c9196" }}>{stat.sub}</div>
+            </div>
+          ))}
+        </div>
 
-                {selectedDayInfo && !dayIsAgendable(selectedDayInfo) &&
-                  selectedDayInfo.type !== "pasado" && selectedDayInfo.type !== "bloqueado" && selectedDayInfo.type !== "noDisponible" && (
-                  <div style={{ background: "#fff4e5", border: "1px solid #e8a0a0", borderRadius: "8px", padding: "14px", fontSize: "14px" }}>
-                    <strong>Sin saldo disponible para este tipo de día.</strong><br />
-                    {selectedDayInfo.type === "laboral"
-                      ? "No tienes horas laborales. Contacta para recargar tu bolsa."
-                      : "No tienes horas festivas. Contacta para recargar tu bolsa."}
-                  </div>
-                )}
+        {!laboralConfig && (
+          <div style={{ background: "#fff4e5", border: "1px solid #f4c07a", borderRadius: "10px", padding: "16px 18px", marginBottom: "24px" }}>
+            La tienda aún no tiene horarios configurados. Contacta con nosotros para más información.
+          </div>
+        )}
 
-                <div style={{ background: "#fff", border: "1px solid #e0e0e0", borderRadius: "10px", padding: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                    <div>
-                      <strong>{formatDate(selectedDay)}</strong>
-                      <span style={{ display: "block", fontSize: "12px", color: "#6d7175", marginTop: "2px" }}>
-                        {selectedDayInfo?.type === "festivo" ? "Día festivo · horas festivas" : "Día laboral · horas laborales"}
-                      </span>
-                    </div>
-                    {selectedDayInfo && dayIsAgendable(selectedDayInfo) && availableHoursOnDay > 0 && !showForm && (
-                      <button
-                        onClick={() => setShowForm(true)}
-                        style={{ background: "#008060", color: "#fff", border: "none", borderRadius: "6px", padding: "7px 14px", cursor: "pointer", fontSize: "13px" }}
-                      >
-                        + Agendar
-                      </button>
-                    )}
-                  </div>
+        {laboralConfig && !allExpiredOrEmpty && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: "20px", alignItems: "start" }}>
 
-                  {showForm && (
-                    <fetcher.Form method="post" style={{ marginBottom: "16px" }}>
-                      <input type="hidden" name="intent" value="create-slot" />
-                      <input type="hidden" name="date" value={selectedDay} />
-                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                        {formError && (
-                          <div style={{ background: "#fce8e8", border: "1px solid #e8b4b4", borderRadius: "6px", padding: "10px", fontSize: "13px", color: "#d72c0d" }}>
-                            {formError}
-                          </div>
-                        )}
+            {/* ── Calendario ── */}
+            <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px", padding: "24px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
 
-                        <div>
-                          <label style={{ fontSize: "13px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Hora de inicio</label>
-                          <select
-                            name="startTime"
-                            value={selectedTime}
-                            onChange={(e) => { setSelectedTime(e.target.value); setSelectedHours(0); }}
-                            required
-                            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #d0d0d0", fontSize: "14px" }}
-                          >
-                            <option value="">Seleccionar hora...</option>
-                            {timeSlots.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
+              {/* Navegación mes */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <button
+                  onClick={() => navigateMonth(-1)}
+                  style={{ width: 36, height: 36, borderRadius: "8px", border: "1px solid #e0e0e0", background: "#fff", cursor: "pointer", fontSize: "16px", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ‹
+                </button>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: "18px" }}>{MONTH_NAMES[month]}</div>
+                  <div style={{ fontSize: "12px", color: "#8c9196" }}>{year}</div>
+                </div>
+                <button
+                  onClick={() => navigateMonth(1)}
+                  style={{ width: 36, height: 36, borderRadius: "8px", border: "1px solid #e0e0e0", background: "#fff", cursor: "pointer", fontSize: "16px", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  ›
+                </button>
+              </div>
+
+              {/* Leyenda */}
+              <div style={{ display: "flex", gap: "14px", marginBottom: "16px", fontSize: "11px", color: "#6d7175", flexWrap: "wrap" }}>
+                {[
+                  { dot: "#008060", label: "Laboral" },
+                  { dot: "#c05c00", label: "Festivo" },
+                  { dot: "#e8a0a0", label: "Cerrado" },
+                ].map((l) => (
+                  <span key={l.label} style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: l.dot, display: "inline-block", flexShrink: 0 }} />
+                    {l.label}
+                  </span>
+                ))}
+              </div>
+
+              {/* Cabecera días de la semana */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", marginBottom: "4px" }}>
+                {DAY_NAMES.map((n) => (
+                  <div key={n} style={{ textAlign: "center", fontSize: "11px", fontWeight: 600, color: "#8c9196", padding: "4px 0", letterSpacing: "0.03em" }}>{n}</div>
+                ))}
+              </div>
+
+              {/* Grid de días */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px" }}>
+                {Array.from({ length: firstDayOffset }).map((_, i) => <div key={`e-${i}`} />)}
+                {Array.from({ length: daysCount }, (_, i) => i + 1).map((day) => {
+                  const info = getDayInfo(day);
+                  const isSelected = selectedDay === info.isoDate;
+                  const isToday = new Date(year, month, day).toDateString() === new Date().toDateString();
+                  const agendable = dayIsAgendable(info);
+
+                  // Colores base por tipo
+                  let bg = "transparent", textColor = "#c0c0c0", cursor = "default";
+                  let borderStyle = "2px solid transparent";
+                  let dotColor = "";
+
+                  if (info.type === "laboral") {
+                    bg = agendable ? "#f0faf7" : "#f7fdf9";
+                    textColor = "#1a1a1a";
+                    cursor = "pointer"; // siempre clickable para mostrar CTA si no hay saldo
+                    dotColor = "#008060";
+                  } else if (info.type === "festivo") {
+                    bg = agendable ? "#fff4e5" : "#fffaf4";
+                    textColor = "#1a1a1a";
+                    cursor = "pointer"; // siempre clickable para mostrar CTA si no hay saldo
+                    dotColor = "#c05c00";
+                  } else if (info.type === "bloqueado") {
+                    bg = "#fce8e8";
+                    textColor = "#c0a0a0";
+                    cursor = "not-allowed";
+                    dotColor = "#e8a0a0";
+                  }
+
+                  if (isSelected) {
+                    bg = info.type === "festivo" ? "#ffe8c0" : "#c8e8da";
+                    borderStyle = `2px solid ${info.type === "festivo" ? "#c05c00" : "#008060"}`;
+                  } else if (isToday && (info.type === "laboral" || info.type === "festivo")) {
+                    borderStyle = `2px solid ${info.type === "festivo" ? "#f4c07a" : "#b8e0d4"}`;
+                  }
+
+                  return (
+                    <div
+                      key={day}
+                      onClick={() => {
+                        // Días cerrados, pasados o bloqueados: ignorar click
+                        if (info.type === "noDisponible" || info.type === "pasado" || info.type === "bloqueado") return;
+                        // Días laborales/festivos sin saldo: seleccionar para mostrar CTA de compra
+                        setSelectedDay(info.isoDate);
+                        setShowForm(false);
+                        setFormError("");
+                      }}
+                      style={{
+                        position: "relative", aspectRatio: "1", borderRadius: "10px",
+                        background: bg, border: borderStyle, cursor,
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        gap: "2px", transition: "all 0.1s",
+                      }}
+                    >
+                      <span style={{ fontSize: "13px", fontWeight: isToday ? 800 : 500, color: textColor, lineHeight: 1 }}>{day}</span>
+
+                      {/* Dot indicador de tipo */}
+                      {dotColor && (
+                        <span style={{ width: 4, height: 4, borderRadius: "50%", background: dotColor, display: "block" }} />
+                      )}
+
+                      {/* "sin saldo" label */}
+                      {(info.type === "laboral" || info.type === "festivo") && !agendable && (
+                        <span style={{ fontSize: "7px", color: info.type === "festivo" ? "#c05c00" : "#008060", fontWeight: 700, letterSpacing: "0.02em", lineHeight: 1 }}>
+                          sin saldo
+                        </span>
+                      )}
+
+                      {/* Festivo label */}
+                      {info.type === "festivo" && info.holiday && agendable && (
+                        <span style={{ fontSize: "7px", color: "#c05c00", fontWeight: 600, lineHeight: 1 }}>
+                          {info.holiday.priceExtra > 0 ? `+€${info.holiday.priceExtra}/h` : "festivo"}
+                        </span>
+                      )}
+
+                      {/* Bloqueado */}
+                      {info.type === "bloqueado" && (
+                        <span style={{ fontSize: "9px", lineHeight: 1 }}>🔒</span>
+                      )}
+
+                      {/* Badge agendamientos */}
+                      {info.slotsCount > 0 && (
+                        <div style={{
+                          position: "absolute", top: 3, right: 3,
+                          background: "#008060", color: "#fff", borderRadius: "6px",
+                          fontSize: "8px", padding: "1px 4px", fontWeight: 700, lineHeight: 1.4,
+                        }}>
+                          {info.slotsCount}
                         </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                        <div>
-                          <label style={{ fontSize: "13px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                            Horas a usar (disponibles: {kindAvailable}h · mínimo: {minHours}h)
-                          </label>
-                          <select
-                            name="hours"
-                            value={selectedHours || ""}
-                            onChange={(e) => setSelectedHours(parseInt(e.target.value))}
-                            required
-                            disabled={!selectedTime}
-                            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #d0d0d0", fontSize: "14px", background: !selectedTime ? "#f0f0f0" : undefined }}
-                          >
-                            <option value="">Seleccionar horas...</option>
-                            {availableHoursOnDay >= minHours
-                              ? Array.from({ length: availableHoursOnDay - minHours + 1 }, (_, i) => i + minHours).map((h) => (
-                                  <option key={h} value={h}>{h} hora{h > 1 ? "s" : ""}</option>
-                                ))
-                              : null}
-                          </select>
-                          {selectedTime && availableHoursOnDay < minHours && (
-                            <p style={{ color: "#d72c0d", fontSize: "12px", margin: "4px 0 0" }}>
-                              No hay suficientes horas disponibles desde este horario para cubrir el mínimo de {minHours}h.
-                            </p>
+            {/* ── Panel lateral ── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+              {!selectedDay ? (
+                <div style={{
+                  background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px",
+                  padding: "32px 24px", textAlign: "center", color: "#8c9196",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                }}>
+                  <div style={{ fontSize: "32px", marginBottom: "12px" }}>📅</div>
+                  <div style={{ fontWeight: 600, fontSize: "14px", color: "#3a3a3a", marginBottom: "6px" }}>Selecciona un día</div>
+                  <div style={{ fontSize: "13px" }}>Elige un día disponible en el calendario para ver opciones de agendamiento.</div>
+                </div>
+              ) : (
+                <>
+                  {/* Cabecera del día seleccionado */}
+                  <div style={{
+                    background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px",
+                    padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <div style={{ fontSize: "16px", fontWeight: 700 }}>{formatDate(selectedDay)}</div>
+                        <div style={{ marginTop: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span style={{
+                            display: "inline-block", padding: "2px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 600,
+                            background: accentBg, color: accentColor, border: `1px solid ${accentBorder}`,
+                          }}>
+                            {isFestivo ? "🎉 Festivo" : "💼 Laboral"}
+                          </span>
+                          {selectedDayInfo?.type === "festivo" && selectedDayInfo.holiday && selectedDayInfo.holiday.priceExtra > 0 && (
+                            <span style={{ fontSize: "11px", color: "#c05c00", fontWeight: 600 }}>
+                              +€{selectedDayInfo.holiday.priceExtra.toFixed(2)}/h
+                            </span>
                           )}
                         </div>
-
-                        <div>
-                          <label style={{ fontSize: "13px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Notas (opcional)</label>
-                          <textarea
-                            name="notes"
-                            rows={2}
-                            placeholder="Instrucciones especiales, dirección adicional..."
-                            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #d0d0d0", fontSize: "14px", resize: "vertical", boxSizing: "border-box" }}
-                          />
-                        </div>
-
-                        <div style={{ display: "flex", gap: "8px" }}>
-                          <button
-                            type="submit"
-                            disabled={isSubmitting || !selectedTime || !selectedHours}
-                            style={{
-                              background: (isSubmitting || !selectedTime || !selectedHours) ? "#aaa" : "#008060",
-                              color: "#fff", border: "none", borderRadius: "6px",
-                              padding: "9px 18px", cursor: (isSubmitting || !selectedTime || !selectedHours) ? "default" : "pointer",
-                              fontSize: "14px", fontWeight: 600,
-                            }}
-                          >
-                            {isSubmitting ? "Guardando..." : "Confirmar agendamiento"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setShowForm(false); setFormError(""); }}
-                            style={{ background: "none", border: "1px solid #d0d0d0", borderRadius: "6px", padding: "9px 14px", cursor: "pointer", fontSize: "14px" }}
-                          >
-                            Cancelar
-                          </button>
-                        </div>
                       </div>
-                    </fetcher.Form>
+                      {selectedDayInfo && dayIsAgendable(selectedDayInfo) && availableHoursOnDay > 0 && !showForm && (
+                        <button
+                          onClick={() => setShowForm(true)}
+                          style={{
+                            background: "#008060", color: "#fff", border: "none", borderRadius: "8px",
+                            padding: "8px 16px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
+                            flexShrink: 0,
+                          }}
+                        >
+                          + Agendar
+                        </button>
+                      )}
+                    </div>
+
+                  </div>
+
+                  {/* Sin saldo → CTA de compra contextual (card independiente y prominente) */}
+                  {selectedDayInfo && !dayIsAgendable(selectedDayInfo) &&
+                    selectedDayInfo.type !== "pasado" && selectedDayInfo.type !== "bloqueado" && selectedDayInfo.type !== "noDisponible" && (
+                    <div style={{
+                      background: "#fff", border: `2px solid ${selectedDayInfo.type === "festivo" ? "#f4c07a" : "#b8e0d4"}`,
+                      borderRadius: "16px", padding: "20px",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+                    }}>
+                      <div style={{ fontSize: "28px", marginBottom: "10px" }}>🛒</div>
+                      <div style={{ fontWeight: 700, fontSize: "15px", marginBottom: "6px" }}>
+                        {selectedDayInfo.type === "festivo"
+                          ? "Necesitas horas festivas"
+                          : "Necesitas horas laborales"}
+                      </div>
+                      <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "18px", lineHeight: 1.5 }}>
+                        {selectedDayInfo.type === "festivo"
+                          ? "Este día es festivo y no tienes horas festivas disponibles. Adquiérelas en la tienda y podrás agendar de inmediato."
+                          : "No tienes horas laborales disponibles. Adquiérelas en la tienda y podrás agendar de inmediato."}
+                      </div>
+                      <a
+                        href={selectedDayInfo.type === "festivo" ? festivoProductUrl : laboralProductUrl}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+                          padding: "12px 20px", borderRadius: "10px", width: "100%", boxSizing: "border-box",
+                          background: selectedDayInfo.type === "festivo" ? "#c05c00" : "#008060",
+                          color: "#fff", textDecoration: "none", fontSize: "14px", fontWeight: 700,
+                        }}
+                      >
+                        {selectedDayInfo.type === "festivo" ? "🎉 Comprar horas festivas" : "💼 Comprar horas laborales"}
+                      </a>
+                    </div>
                   )}
 
-                  {selectedDaySlots.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {selectedDaySlots.map((slot) => (
-                        <div key={slot.id} style={{ background: "#f6f6f7", borderRadius: "6px", padding: "10px 12px" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  {/* Formulario de agendamiento */}
+                  {showForm && (
+                    <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px", padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                      <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "16px" }}>Nuevo agendamiento</div>
+                      <fetcher.Form method="post">
+                        <input type="hidden" name="intent" value="create-slot" />
+                        <input type="hidden" name="date" value={selectedDay} />
+                        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                          {formError && (
+                            <div style={{ background: "#fce8e8", border: "1px solid #e8b4b4", borderRadius: "8px", padding: "10px 14px", fontSize: "13px", color: "#d72c0d" }}>
+                              {formError}
+                            </div>
+                          )}
+
+                          <div>
+                            <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px", color: "#3a3a3a" }}>Hora de inicio</label>
+                            <select
+                              name="startTime"
+                              value={selectedTime}
+                              onChange={(e) => { setSelectedTime(e.target.value); setSelectedHours(0); }}
+                              required
+                              style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d0d0d0", fontSize: "14px", background: "#fff" }}
+                            >
+                              <option value="">Seleccionar hora...</option>
+                              {timeSlots.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px", color: "#3a3a3a" }}>
+                              Horas a usar{" "}
+                              <span style={{ fontWeight: 400, color: "#8c9196" }}>(disponibles: {kindAvailable}h · mínimo: {minHours}h)</span>
+                            </label>
+                            <select
+                              name="hours"
+                              value={selectedHours || ""}
+                              onChange={(e) => setSelectedHours(parseInt(e.target.value))}
+                              required
+                              disabled={!selectedTime}
+                              style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d0d0d0", fontSize: "14px", background: !selectedTime ? "#f5f5f5" : "#fff" }}
+                            >
+                              <option value="">Seleccionar horas...</option>
+                              {availableHoursOnDay >= minHours
+                                ? Array.from({ length: availableHoursOnDay - minHours + 1 }, (_, i) => i + minHours).map((h) => (
+                                    <option key={h} value={h}>{h} hora{h > 1 ? "s" : ""}</option>
+                                  ))
+                                : null}
+                            </select>
+                            {selectedTime && availableHoursOnDay < minHours && (
+                              <p style={{ color: "#d72c0d", fontSize: "12px", margin: "6px 0 0" }}>
+                                No hay horas suficientes desde este horario para cubrir el mínimo de {minHours}h.
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px", color: "#3a3a3a" }}>Notas (opcional)</label>
+                            <textarea
+                              name="notes"
+                              rows={2}
+                              placeholder="Instrucciones especiales, dirección adicional..."
+                              style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d0d0d0", fontSize: "14px", resize: "vertical", boxSizing: "border-box" }}
+                            />
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            <button
+                              type="submit"
+                              disabled={isSubmitting || !selectedTime || !selectedHours}
+                              style={{
+                                flex: 1, padding: "10px", borderRadius: "8px", border: "none", fontWeight: 700, fontSize: "14px", cursor: (isSubmitting || !selectedTime || !selectedHours) ? "default" : "pointer",
+                                background: (isSubmitting || !selectedTime || !selectedHours) ? "#c5c5c5" : "#008060",
+                                color: "#fff", transition: "background 0.15s",
+                              }}
+                            >
+                              {isSubmitting ? "Guardando..." : "Confirmar agendamiento"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setShowForm(false); setFormError(""); }}
+                              style={{ padding: "10px 16px", borderRadius: "8px", border: "1px solid #d0d0d0", background: "#fff", cursor: "pointer", fontSize: "14px" }}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      </fetcher.Form>
+                    </div>
+                  )}
+
+                  {/* Agendamientos del día */}
+                  <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px", padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                    <div style={{ fontWeight: 700, fontSize: "13px", color: "#3a3a3a", marginBottom: "12px" }}>
+                      Agendamientos este día
+                    </div>
+                    {selectedDaySlots.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {selectedDaySlots.map((slot) => (
+                          <div key={slot.id} style={{
+                            background: "#f7f8fa", borderRadius: "10px", padding: "12px 14px",
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                          }}>
                             <div>
-                              <strong>{slot.startTime}</strong>
-                              <span style={{ color: "#6d7175", marginLeft: "8px" }}>{slot.hours}h</span>
-                              <span style={{ marginLeft: "8px", fontSize: "11px", color: slot.scheduleKind === "FESTIVO" ? "#c05c00" : "#008060", fontWeight: 600 }}>
+                              <div style={{ fontWeight: 600, fontSize: "14px" }}>{slot.startTime} · {slot.hours}h</div>
+                              {slot.notes && <div style={{ fontSize: "12px", color: "#6d7175", marginTop: "2px" }}>{slot.notes}</div>}
+                              <span style={{
+                                display: "inline-block", marginTop: "4px", fontSize: "10px", fontWeight: 700,
+                                padding: "2px 8px", borderRadius: "20px",
+                                background: slot.scheduleKind === "FESTIVO" ? "#fff4e5" : "#f0faf7",
+                                color: slot.scheduleKind === "FESTIVO" ? "#c05c00" : "#008060",
+                              }}>
                                 {slot.scheduleKind === "FESTIVO" ? "Festivo" : "Laboral"}
                               </span>
                             </div>
                             <fetcher.Form method="post">
                               <input type="hidden" name="intent" value="cancel-slot" />
                               <input type="hidden" name="slotId" value={slot.id} />
-                              <button type="submit" style={{ background: "none", border: "none", color: "#d72c0d", cursor: "pointer", fontSize: "12px" }}>
+                              <button type="submit" style={{
+                                background: "none", border: "1px solid #e8a0a0", borderRadius: "6px",
+                                color: "#d72c0d", cursor: "pointer", fontSize: "12px", padding: "4px 10px", fontWeight: 500,
+                              }}>
                                 Cancelar
                               </button>
                             </fetcher.Form>
                           </div>
-                          {slot.notes && <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#6d7175" }}>{slot.notes}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p style={{ color: "#6d7175", fontSize: "13px", margin: 0 }}>No hay agendamientos para este día.</p>
-                  )}
-                </div>
-              </>
-            )}
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ color: "#8c9196", fontSize: "13px", margin: 0 }}>Sin agendamientos para este día.</p>
+                    )}
+                  </div>
+                </>
+              )}
 
-            {/* Historial de agendamientos confirmados */}
-            {confirmedSlots.length > 0 && (
-              <div style={{ background: "#fff", border: "1px solid #e0e0e0", borderRadius: "10px", padding: "16px" }}>
-                <strong style={{ fontSize: "14px" }}>Mis agendamientos confirmados</strong>
-                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {confirmedSlots.map((s) => (
-                    <div key={s.id} style={{ fontSize: "13px", padding: "8px", background: "#f6f6f7", borderRadius: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>
-                        <strong>{formatDate(s.date)}</strong> · {s.startTime} · {s.hours}h
-                      </span>
-                      <span style={{ fontSize: "11px", fontWeight: 600, color: s.scheduleKind === "FESTIVO" ? "#c05c00" : "#008060" }}>
-                        {s.scheduleKind === "FESTIVO" ? "Festivo" : "Laboral"}
-                      </span>
-                    </div>
-                  ))}
+              {/* Historial completo */}
+              {confirmedSlots.length > 0 && (
+                <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "16px", padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontWeight: 700, fontSize: "13px", color: "#3a3a3a", marginBottom: "12px" }}>
+                    Todos mis agendamientos
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    {confirmedSlots.map((s) => (
+                      <div key={s.id} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "8px 12px", background: "#f7f8fa", borderRadius: "8px", fontSize: "13px",
+                      }}>
+                        <span>
+                          <strong>{formatDate(s.date)}</strong>
+                          <span style={{ color: "#6d7175" }}> · {s.startTime} · {s.hours}h</span>
+                        </span>
+                        <span style={{
+                          fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "20px",
+                          background: s.scheduleKind === "FESTIVO" ? "#fff4e5" : "#f0faf7",
+                          color: s.scheduleKind === "FESTIVO" ? "#c05c00" : "#008060",
+                        }}>
+                          {s.scheduleKind === "FESTIVO" ? "Festivo" : "Laboral"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
           </div>
-        </div>
-      )}
-
-      <div style={{ marginTop: "32px", paddingTop: "24px", borderTop: "1px solid #e0e0e0", textAlign: "center" }}>
-        <a
-          href={storeUrl}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: "6px",
-            padding: "10px 20px", background: "#f6f6f7", color: "#1a1a1a", border: "1px solid #e0e0e0", borderRadius: "8px",
-            textDecoration: "none", fontSize: "14px", fontWeight: 500,
-          }}
-        >
-          ← Volver a la tienda
-        </a>
+        )}
       </div>
     </div>
   );

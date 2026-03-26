@@ -374,9 +374,6 @@ export default function SchedulingConfig() {
                 <s-paragraph>
                   Un día bloqueado cierra completamente la agenda: ningún cliente podrá agendar ese día desde su portal.
                 </s-paragraph>
-                <s-paragraph>
-                  A diferencia de los días no laborales (que dependen del horario semanal), aquí puedes bloquear días concretos de forma puntual: vacaciones, imprevistos, mantenimiento, etc.
-                </s-paragraph>
                 <s-banner tone="warning" heading="Agendamientos existentes">
                   <s-paragraph>
                     Bloquear un día no cancela automáticamente los servicios ya confirmados en esa fecha. Revisa el calendario antes de bloquearlo.

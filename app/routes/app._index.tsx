@@ -157,7 +157,8 @@ export default function Index() {
             <s-section heading="Acciones rápidas">
               <s-stack direction="block" gap="base">
                 <s-button href="/app/calendar" variant="primary">Ver Calendario</s-button>
-                <s-button href="/app/calendar?tab=packages" variant="secondary">Paquetes de horas</s-button>
+                <s-button href="/app/calendar?tab=packages" variant="secondary">Bolsas de horas</s-button>
+                <s-button href="/app/packages" variant="secondary">Detalle de órdenes</s-button>
                 <s-button href="/app/scheduling-config" variant="secondary">Configurar Horarios</s-button>
               </s-stack>
             </s-section>

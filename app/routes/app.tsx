@@ -20,6 +20,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Inicio</s-link>
         <s-link href="/app/calendar">Calendario</s-link>
+        <s-link href="/app/packages">Detalle de órdenes</s-link>
         <s-link href="/app/scheduling-config">Configuración</s-link>
       </s-app-nav>
       <Outlet />

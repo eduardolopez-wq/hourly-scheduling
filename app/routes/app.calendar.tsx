@@ -83,6 +83,46 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       expiresAt: p.expiresAt.toISOString(),
       accessToken: p.accessToken,
     })),
+    // Bolsas agrupadas por cliente
+    customerBolsas: (() => {
+      const map = new Map<string, {
+        email: string;
+        name: string;
+        laboralTotal: number; laboralUsed: number;
+        festivoTotal: number; festivoUsed: number;
+        nextExpiry: string;
+        accessToken: string; // token del paquete con saldo que vence antes (FIFO)
+      }>();
+      // packages ya viene ordenado por purchasedAt desc; reordenamos para FIFO
+      const fifo = [...packages].sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+      for (const p of fifo) {
+        const key = p.customerEmail.toLowerCase();
+        const existing = map.get(key);
+        const r = p.hoursTotal - p.hoursUsed;
+        if (!existing) {
+          map.set(key, {
+            email: p.customerEmail,
+            name: p.customerName,
+            laboralTotal: p.scheduleKind === "LABORAL" ? p.hoursTotal : 0,
+            laboralUsed: p.scheduleKind === "LABORAL" ? p.hoursUsed : 0,
+            festivoTotal: p.scheduleKind === "FESTIVO" ? p.hoursTotal : 0,
+            festivoUsed: p.scheduleKind === "FESTIVO" ? p.hoursUsed : 0,
+            nextExpiry: p.expiresAt.toISOString(),
+            accessToken: r > 0 ? p.accessToken : "",
+          });
+        } else {
+          if (p.scheduleKind === "LABORAL") { existing.laboralTotal += p.hoursTotal; existing.laboralUsed += p.hoursUsed; }
+          else { existing.festivoTotal += p.hoursTotal; existing.festivoUsed += p.hoursUsed; }
+          // Actualizar token si el actual no tiene saldo y este sí
+          if (!existing.accessToken && r > 0) existing.accessToken = p.accessToken;
+          // nextExpiry = el más próximo entre los que tienen saldo
+          if (r > 0 && new Date(p.expiresAt).getTime() < new Date(existing.nextExpiry).getTime()) {
+            existing.nextExpiry = p.expiresAt.toISOString();
+          }
+        }
+      }
+      return Array.from(map.values());
+    })(),
   };
 };
 
@@ -262,15 +302,17 @@ const MONTH_NAMES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
 const DAY_NAMES = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 
 export default function Calendar() {
-  const { shop, year, month, laboralConfig, festivoConfig, holidays, blockedDays, slots, packages } = useLoaderData<typeof loader>();
-  const [, setSearchParams] = useSearchParams();
+  const { shop, year, month, laboralConfig, festivoConfig, holidays, blockedDays, slots, packages, customerBolsas } = useLoaderData<typeof loader>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedPackageId, setSelectedPackageId] = useState("");
-  const [activeTab, setActiveTab] = useState<"calendar" | "packages">("calendar");
+  const [activeTab, setActiveTab] = useState<"calendar" | "packages">(
+    searchParams.get("tab") === "packages" ? "packages" : "calendar"
+  );
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -345,7 +387,7 @@ export default function Calendar() {
       <div style={{ borderBottom: "1px solid #e0e0e0", marginBottom: "16px", display: "flex" }}>
         <button type="button" style={tabStyle("calendar")} onClick={() => setActiveTab("calendar")}>Calendario</button>
         <button type="button" style={tabStyle("packages")} onClick={() => setActiveTab("packages")}>
-          Paquetes de horas ({packages.length})
+          Bolsas de horas ({customerBolsas.length})
         </button>
       </div>
 
@@ -592,63 +634,93 @@ export default function Calendar() {
       )}
 
       {activeTab === "packages" && (
-        <s-section heading="Paquetes de horas comprados">
-          {packages.length === 0 ? (
-            <s-paragraph>No hay paquetes registrados. Se crean automáticamente cuando un cliente paga una orden.</s-paragraph>
+        <s-stack direction="block" gap="base">
+          <s-section heading="Bolsas de horas por cliente">
+            <s-stack direction="block" gap="small">
+              <s-paragraph>
+                Cada fila representa la bolsa total de un cliente (suma de todas sus órdenes activas).
+                Para ver el detalle de órdenes individuales, usa el enlace "Ver órdenes".
+              </s-paragraph>
+            </s-stack>
+          </s-section>
+
+          {customerBolsas.length === 0 ? (
+            <s-section>
+              <s-paragraph>No hay bolsas de horas registradas. Se crean automáticamente cuando un cliente paga una orden.</s-paragraph>
+            </s-section>
           ) : (
-            <s-table>
-              <s-table-header-row>
-                <s-table-header listSlot="primary">Orden</s-table-header>
-                <s-table-header listSlot="labeled">Cliente</s-table-header>
-                <s-table-header listSlot="labeled">Servicio</s-table-header>
-                <s-table-header listSlot="labeled">Horas</s-table-header>
-                <s-table-header listSlot="labeled">Vence</s-table-header>
-                <s-table-header listSlot="inline">Portal cliente</s-table-header>
-              </s-table-header-row>
-              <s-table-body>
-                {packages.map((pkg) => {
-                  const expiresDate = new Date(pkg.expiresAt);
-                  const isExpired = expiresDate < new Date();
-                  const daysLeft = Math.max(0, Math.ceil((expiresDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-                  return (
-                    <s-table-row key={pkg.id}>
-                      <s-table-cell>{pkg.orderName}</s-table-cell>
-                      <s-table-cell>
-                        <s-stack direction="block" gap="small">
-                          <s-text>{pkg.customerName}</s-text>
-                          <s-text color="subdued">{pkg.customerEmail}</s-text>
-                        </s-stack>
-                      </s-table-cell>
-                      <s-table-cell>{pkg.productTitle}</s-table-cell>
-                      <s-table-cell>
-                        <s-stack direction="block" gap="small">
-                          <s-text>{pkg.hoursUsed}/{pkg.hoursTotal}h usadas</s-text>
-                          <s-badge tone={pkg.hoursRemaining === 0 ? "neutral" : "success"}>
-                            {pkg.hoursRemaining}h disponibles
+            <s-section>
+              <s-table>
+                <s-table-header-row>
+                  <s-table-header listSlot="primary">Cliente</s-table-header>
+                  <s-table-header listSlot="labeled">Horas laborales</s-table-header>
+                  <s-table-header listSlot="labeled">Horas festivas</s-table-header>
+                  <s-table-header listSlot="labeled">Próx. expiración</s-table-header>
+                  <s-table-header listSlot="inline">Acciones</s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {customerBolsas.map((bolsa) => {
+                    const laboralRemaining = bolsa.laboralTotal - bolsa.laboralUsed;
+                    const festivoRemaining = bolsa.festivoTotal - bolsa.festivoUsed;
+                    const nextExpiry = new Date(bolsa.nextExpiry);
+                    const daysLeft = Math.max(0, Math.ceil((nextExpiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+                    const isExpired = nextExpiry < new Date();
+                    return (
+                      <s-table-row key={bolsa.email}>
+                        <s-table-cell>
+                          <s-stack direction="block" gap="small">
+                            <s-text>{bolsa.name || bolsa.email}</s-text>
+                            <s-text color="subdued">{bolsa.email}</s-text>
+                          </s-stack>
+                        </s-table-cell>
+                        <s-table-cell>
+                          <s-stack direction="block" gap="small">
+                            <s-text>{bolsa.laboralUsed}/{bolsa.laboralTotal}h usadas</s-text>
+                            <s-badge tone={laboralRemaining === 0 ? "neutral" : "success"}>
+                              {laboralRemaining}h disponibles
+                            </s-badge>
+                          </s-stack>
+                        </s-table-cell>
+                        <s-table-cell>
+                          <s-stack direction="block" gap="small">
+                            <s-text>{bolsa.festivoUsed}/{bolsa.festivoTotal}h usadas</s-text>
+                            <s-badge tone={festivoRemaining === 0 ? "neutral" : "caution"}>
+                              {festivoRemaining}h disponibles
+                            </s-badge>
+                          </s-stack>
+                        </s-table-cell>
+                        <s-table-cell>
+                          <s-badge tone={isExpired ? "critical" : daysLeft < 30 ? "caution" : "neutral"}>
+                            {isExpired ? "Expirado" : `${daysLeft} días`}
                           </s-badge>
-                        </s-stack>
-                      </s-table-cell>
-                      <s-table-cell>
-                        <s-badge tone={isExpired ? "critical" : daysLeft < 30 ? "caution" : "neutral"}>
-                          {isExpired ? "Expirado" : `${daysLeft} días`}
-                        </s-badge>
-                      </s-table-cell>
-                      <s-table-cell>
-                        <s-button
-                          href={`${portalBaseUrl}/${pkg.accessToken}`}
-                          target="_blank"
-                          variant="tertiary"
-                        >
-                          Administrar→
-                        </s-button>
-                      </s-table-cell>
-                    </s-table-row>
-                  );
-                })}
-              </s-table-body>
-            </s-table>
+                        </s-table-cell>
+                        <s-table-cell>
+                          <s-stack direction="inline" gap="small">
+                            {bolsa.accessToken && (
+                              <s-button
+                                href={`${portalBaseUrl}/${bolsa.accessToken}`}
+                                target="_blank"
+                                variant="primary"
+                              >
+                                Administrar→
+                              </s-button>
+                            )}
+                            <s-button
+                              href={`/app/packages?email=${encodeURIComponent(bolsa.email)}`}
+                              variant="tertiary"
+                            >
+                              Ver órdenes
+                            </s-button>
+                          </s-stack>
+                        </s-table-cell>
+                      </s-table-row>
+                    );
+                  })}
+                </s-table-body>
+              </s-table>
+            </s-section>
           )}
-        </s-section>
+        </s-stack>
       )}
     </s-page>
   );
