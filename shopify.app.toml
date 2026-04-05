@@ -2,7 +2,7 @@
 
 client_id = "30b61b3bd5038578bbbdbe7aab2bf7b1"
 name = "HourlyScheduling"
-application_url = "https://example.com"
+application_url = "https://hourlyscheduling.vivofacil.org"
 embedded = true
 
 [build]
@@ -28,10 +28,10 @@ api_version = "2026-04"
 scopes = "write_metaobject_definitions,write_metaobjects,write_products,read_orders,read_customers"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://hourlyscheduling.vivofacil.org" ]
 
 [app_proxy]
-url = "https://example.com/apps/scheduling"
+url = "https://hourlyscheduling.vivofacil.org/apps/scheduling"
 subpath = "scheduling"
 prefix = "apps"
 
