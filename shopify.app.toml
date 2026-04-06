@@ -28,7 +28,7 @@ api_version = "2026-04"
 scopes = "write_metaobject_definitions,write_metaobjects,write_products,read_orders,read_customers"
 
 [auth]
-redirect_urls = [ "https://hourlyscheduling.vivofacil.org" ]
+redirect_urls = [ "https://hourlyscheduling.vivofacil.org/auth/callback" ]
 
 [app_proxy]
 url = "https://hourlyscheduling.vivofacil.org/apps/scheduling"
