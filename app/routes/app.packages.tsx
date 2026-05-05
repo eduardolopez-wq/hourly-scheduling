@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import { useLoaderData, useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -71,6 +71,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function PackagesDetailsPage() {
   const { packages, q, kind, page, total, totalPages } = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+
+  const preservedParams = new URLSearchParams();
+  const authParamKeys = ["shop", "host", "embedded", "hmac", "timestamp", "session", "id_token"];
+
+  for (const key of authParamKeys) {
+    const value = searchParams.get(key);
+    if (value) {
+      preservedParams.set(key, value);
+    }
+  }
+
+  const buildPackagesUrl = (nextPage?: number) => {
+    const params = new URLSearchParams(preservedParams);
+
+    if (q) {
+      params.set("q", q);
+    }
+
+    if (kind !== "ALL") {
+      params.set("kind", kind);
+    }
+
+    if (nextPage && nextPage > 1) {
+      params.set("page", String(nextPage));
+    }
+
+    const queryString = params.toString();
+    return queryString ? `/app/packages?${queryString}` : "/app/packages";
+  };
 
   return (
     <s-page heading="Detalle de órdenes de horas">
@@ -85,6 +115,9 @@ export default function PackagesDetailsPage() {
 
         <s-section heading="Búsqueda y filtros">
           <form method="get">
+            {Array.from(preservedParams.entries()).map(([key, value]) => (
+              <input key={key} type="hidden" name={key} value={value} />
+            ))}
             <s-stack direction="inline" gap="base">
               <s-text-field
                 label="Buscar"
@@ -103,7 +136,7 @@ export default function PackagesDetailsPage() {
               </s-select>
               <s-button type="submit" variant="primary">Aplicar</s-button>
               {(q || kind !== "ALL") && (
-                <s-button href="/app/packages" variant="tertiary">Limpiar</s-button>
+                <s-button href={buildPackagesUrl()} variant="tertiary">Limpiar</s-button>
               )}
             </s-stack>
           </form>
@@ -150,14 +183,14 @@ export default function PackagesDetailsPage() {
               <s-paragraph>Página {page} de {totalPages}</s-paragraph>
               <s-stack direction="inline" gap="base">
                 <s-button
-                  href={`/app/packages?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}&page=${Math.max(1, page - 1)}`}
+                  href={buildPackagesUrl(Math.max(1, page - 1))}
                   variant="tertiary"
                   disabled={page <= 1}
                 >
                   ← Anterior
                 </s-button>
                 <s-button
-                  href={`/app/packages?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}&page=${Math.min(totalPages, page + 1)}`}
+                  href={buildPackagesUrl(Math.min(totalPages, page + 1))}
                   variant="tertiary"
                   disabled={page >= totalPages}
                 >
