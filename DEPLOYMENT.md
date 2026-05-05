@@ -19,12 +19,14 @@ Este documento describe los requisitos y pasos necesarios para desplegar la apli
 
 #### 1.3. Red y dominio
 
-- Dominio o subdominio público con **HTTPS** obligatorio, por ejemplo:
-  - `https://apps.vivofacil.com`
-  - o la URL que defina Infraestructura.
+- Dominio o subdominio público con **HTTPS** obligatorio.
+- Para este proyecto se manejan dos entornos:
+  - **PRE**: `https://hourlyscheduling.vivofacil.org`
+  - **PROD**: `https://hourlyscheduling.vivofacil.com`
 - Reverse proxy (Nginx/Apache/LB) con:
   - Certificado TLS válido (Let’s Encrypt u otro).
   - Proxy de la URL pública hacia el puerto interno donde corre la app (por ejemplo `http://127.0.0.1:3000`).
+  - Preservar `Host`, `X-Forwarded-Host` y `X-Forwarded-Proto=https`.
 - Sin autenticación adicional (no Basic Auth ni IP whitelists que bloqueen a Shopify).
 
 #### 1.4. Almacenamiento y base de datos
@@ -50,8 +52,10 @@ El proyecto usa **Prisma**. Por defecto está configurado con **SQLite**:
 El servidor debe permitir configurar las siguientes variables de entorno (idealmente como secretos):
 
 - **`SHOPIFY_APP_URL`**  
-  URL pública de la app, incluyendo protocolo.  
-  Ejemplo: `https://apps.vivofacil.com`.
+  URL pública de la app, incluyendo protocolo.
+  Ejemplos:
+  - PRE: `https://hourlyscheduling.vivofacil.org`
+  - PROD: `https://hourlyscheduling.vivofacil.com`
 
 - **`SHOPIFY_API_KEY`**  
   API key de la app Shopify (desde el Dev Dashboard).
@@ -144,21 +148,42 @@ También puede definirse un servicio **systemd** que ejecute `npm run start` con
 
 ### 5. Configuración en Shopify (referencia)
 
-Estos pasos los realiza el equipo de desarrollo, pero se incluyen para contexto:
+El proyecto separa configuración por entorno usando dos archivos:
 
-1. En `shopify.app.toml` se debe configurar:
-   - `application_url = "https://apps.vivofacil.com"` (o la URL real de despliegue).
-   - `[auth].redirect_urls` apuntando a esa URL (por ejemplo `https://apps.vivofacil.com/api/auth`).
-   - `[app_proxy].url` apuntando a la ruta proxy (por ejemplo `https://apps.vivofacil.com/apps/scheduling`).
-2. Con la app Shopify seleccionada, ejecutar:
+- `shopify.app.pre.toml`
+- `shopify.app.prod.toml`
+
+> Importante: evitar ejecutar comandos de Shopify CLI sin `--config`, para no mezclar URLs entre PRE/PROD.
+
+1. Configurar y desplegar PRE:
 
    ```bash
-   shopify app deploy
+   shopify app deploy --config shopify.app.pre.toml
    ```
 
-   Esto actualiza la configuración en Shopify (URLs, proxy, webhooks, etc.) para usar la nueva `SHOPIFY_APP_URL`.
+   Este archivo utiliza:
+   - `application_url = "https://hourlyscheduling.vivofacil.org"`
+   - `redirect_urls = ["https://hourlyscheduling.vivofacil.org/auth/callback"]`
+   - `app_proxy.url = "https://hourlyscheduling.vivofacil.org/apps/scheduling"`
 
-3. Una vez desplegada y con la URL estable, se puede:
+2. Configurar y desplegar PROD:
+
+   ```bash
+   shopify app deploy --config shopify.app.prod.toml
+   ```
+
+   Este archivo utiliza:
+   - `application_url = "https://hourlyscheduling.vivofacil.com"`
+   - `redirect_urls = ["https://hourlyscheduling.vivofacil.com/auth/callback"]`
+   - `app_proxy.url = "https://hourlyscheduling.vivofacil.com/apps/scheduling"`
+
+3. Para desarrollo local con CLI (túnel de Shopify), usar PRE:
+
+   ```bash
+   shopify app dev --config shopify.app.pre.toml
+   ```
+
+4. Una vez desplegada y con la URL estable, se puede:
    - Instalar la app en la tienda de test.
    - Configurar la distribución (Custom/Public) y enviarla a revisión para la Shopify App Store.
 
@@ -173,9 +198,15 @@ Estos pasos los realiza el equipo de desarrollo, pero se incluyen para contexto:
   - O bien disco persistente para SQLite,
   - O bien base de datos Postgres/MySQL con `DATABASE_URL`.
 - **Config**: soporte para variables de entorno (`SHOPIFY_APP_URL`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`, `PORT`, `DATABASE_URL` si aplica).
+- **Configs Shopify CLI**:
+  - PRE: `shopify.app.pre.toml`
+  - PROD: `shopify.app.prod.toml`
 - **Flujo de deploy**:
   - `npm ci`
   - `npm run build`
   - `npx prisma migrate deploy`
   - `npm run start` (bajo PM2 o systemd).
+- **Comandos Shopify (obligatorio con config)**:
+  - `shopify app deploy --config shopify.app.pre.toml`
+  - `shopify app deploy --config shopify.app.prod.toml`
 
