@@ -49,8 +49,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
+  // URL directa del servidor, sin pasar por el App Proxy de Shopify.
+  // Así PRE usa .org y PROD usa .com independientemente del último deploy.
+  const portalBaseUrl = `${process.env.SHOPIFY_APP_URL}/portal`;
+
   return {
     shop,
+    portalBaseUrl,
     year,
     month,
     laboralConfig,
@@ -302,7 +307,7 @@ const MONTH_NAMES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
 const DAY_NAMES = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 
 export default function Calendar() {
-  const { shop, year, month, laboralConfig, festivoConfig, holidays, blockedDays, slots, packages, customerBolsas } = useLoaderData<typeof loader>();
+  const { shop, portalBaseUrl, year, month, laboralConfig, festivoConfig, holidays, blockedDays, slots, packages, customerBolsas } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
@@ -373,7 +378,6 @@ export default function Calendar() {
     ? Math.min(selectedPackage.hoursRemaining, activeConfig ? activeConfig.endHour - activeConfig.startHour : 12)
     : 0;
 
-  const portalBaseUrl = `https://${shop}/apps/scheduling/portal`;
 
   const tabStyle = (tab: typeof activeTab): React.CSSProperties => ({
     padding: "10px 20px", cursor: "pointer", border: "none",
