@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE `Session` (
+CREATE TABLE IF NOT EXISTS `Session` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `state` VARCHAR(191) NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE `Session` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `ScheduleConfig` (
+CREATE TABLE IF NOT EXISTS `ScheduleConfig` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `scheduleType` VARCHAR(191) NOT NULL DEFAULT 'LABORAL',
@@ -38,7 +38,7 @@ CREATE TABLE `ScheduleConfig` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `Holiday` (
+CREATE TABLE IF NOT EXISTS `Holiday` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `date` DATETIME(3) NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE `Holiday` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `HourPackage` (
+CREATE TABLE IF NOT EXISTS `HourPackage` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `orderId` VARCHAR(191) NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE `HourPackage` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `BookingSlot` (
+CREATE TABLE IF NOT EXISTS `BookingSlot` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `packageId` VARCHAR(191) NOT NULL,
@@ -95,7 +95,7 @@ CREATE TABLE `BookingSlot` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `BlockedDay` (
+CREATE TABLE IF NOT EXISTS `BlockedDay` (
     `id` VARCHAR(191) NOT NULL,
     `shop` VARCHAR(191) NOT NULL,
     `date` DATETIME(3) NOT NULL,
@@ -107,7 +107,7 @@ CREATE TABLE `BlockedDay` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `NotificationLog` (
+CREATE TABLE IF NOT EXISTS `NotificationLog` (
     `id` VARCHAR(191) NOT NULL,
     `slotId` VARCHAR(191) NOT NULL,
     `type` VARCHAR(191) NOT NULL,
@@ -118,9 +118,11 @@ CREATE TABLE `NotificationLog` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- AddForeignKey
+-- AddForeignKey (IF NOT EXISTS via DROP + ADD para idempotencia)
+ALTER TABLE `BookingSlot` DROP FOREIGN KEY IF EXISTS `BookingSlot_packageId_fkey`;
 ALTER TABLE `BookingSlot` ADD CONSTRAINT `BookingSlot_packageId_fkey` FOREIGN KEY (`packageId`) REFERENCES `HourPackage`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `NotificationLog` DROP FOREIGN KEY IF EXISTS `NotificationLog_slotId_fkey`;
 ALTER TABLE `NotificationLog` ADD CONSTRAINT `NotificationLog_slotId_fkey` FOREIGN KEY (`slotId`) REFERENCES `BookingSlot`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
