@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS `BookingSlot` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`id`),
+    CONSTRAINT `BookingSlot_packageId_fkey` FOREIGN KEY (`packageId`) REFERENCES `HourPackage`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
@@ -115,14 +116,7 @@ CREATE TABLE IF NOT EXISTS `NotificationLog` (
     `status` VARCHAR(191) NOT NULL DEFAULT 'SENT',
     `error` VARCHAR(191) NULL,
 
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`id`),
+    CONSTRAINT `NotificationLog_slotId_fkey` FOREIGN KEY (`slotId`) REFERENCES `BookingSlot`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- AddForeignKey (IF NOT EXISTS via DROP + ADD para idempotencia)
-ALTER TABLE `BookingSlot` DROP FOREIGN KEY IF EXISTS `BookingSlot_packageId_fkey`;
-ALTER TABLE `BookingSlot` ADD CONSTRAINT `BookingSlot_packageId_fkey` FOREIGN KEY (`packageId`) REFERENCES `HourPackage`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `NotificationLog` DROP FOREIGN KEY IF EXISTS `NotificationLog_slotId_fkey`;
-ALTER TABLE `NotificationLog` ADD CONSTRAINT `NotificationLog_slotId_fkey` FOREIGN KEY (`slotId`) REFERENCES `BookingSlot`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
