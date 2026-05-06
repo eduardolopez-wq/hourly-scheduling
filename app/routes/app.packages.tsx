@@ -1,51 +1,25 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useSearchParams } from "react-router";
+import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-type ScheduleKindFilter = "ALL" | "LABORAL" | "FESTIVO";
+const LIST_LIMIT = 500;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const url = new URL(request.url);
-  const q = (url.searchParams.get("q") ?? "").trim();
-  const kind = (url.searchParams.get("kind") ?? "ALL") as ScheduleKindFilter;
-  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
-  const perPage = 30;
-  const skip = (page - 1) * perPage;
-
-  // Evitamos tipado estricto del WhereInput para no acoplarnos al adapter actual.
-  const where: any = { shop };
-
-  if (kind !== "ALL") {
-    where.scheduleKind = kind;
-  }
-
-  if (q) {
-    where.OR = [
-      { orderId: { contains: q } },
-      { orderName: { contains: q } },
-      { customerName: { contains: q } },
-      { productTitle: { contains: q } },
-    ];
-  }
-
   const adminOrderBaseUrl = `https://${shop}/admin/orders`;
 
   const [packages, total] = await Promise.all([
     prisma.hourPackage.findMany({
-      where,
+      where: { shop },
       orderBy: { purchasedAt: "desc" },
-      skip,
-      take: perPage,
+      take: LIST_LIMIT,
     }),
-    prisma.hourPackage.count({ where }),
+    prisma.hourPackage.count({ where: { shop } }),
   ]);
-
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   return {
     packages: packages.map((pkg) => ({
@@ -60,91 +34,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       hoursTotal: pkg.hoursTotal,
       purchasedAt: pkg.purchasedAt.toISOString(),
     })),
-    q,
-    kind,
-    page,
-    perPage,
     total,
-    totalPages,
+    listLimit: LIST_LIMIT,
   };
 };
 
 export default function PackagesDetailsPage() {
-  const { packages, q, kind, page, total, totalPages } = useLoaderData<typeof loader>();
-  const [searchParams] = useSearchParams();
-
-  const preservedParams = new URLSearchParams();
-  const authParamKeys = ["shop", "host", "embedded", "hmac", "timestamp", "session", "id_token"];
-
-  for (const key of authParamKeys) {
-    const value = searchParams.get(key);
-    if (value) {
-      preservedParams.set(key, value);
-    }
-  }
-
-  const buildPackagesUrl = (nextPage?: number) => {
-    const params = new URLSearchParams(preservedParams);
-
-    if (q) {
-      params.set("q", q);
-    }
-
-    if (kind !== "ALL") {
-      params.set("kind", kind);
-    }
-
-    if (nextPage && nextPage > 1) {
-      params.set("page", String(nextPage));
-    }
-
-    const queryString = params.toString();
-    return queryString ? `/app/packages?${queryString}` : "/app/packages";
-  };
+  const { packages, total, listLimit } = useLoaderData<typeof loader>();
 
   return (
     <s-page heading="Detalle de órdenes de horas">
       <s-stack direction="block" gap="large">
         <s-section heading="Órdenes registradas">
           <s-paragraph>
-            Aquí puedes revisar cada orden individual de horas compradas, filtrar por cliente o servicio y abrir el pedido
-            directamente en Shopify Admin.
+            Aquí puedes revisar cada orden individual de horas compradas y abrir el pedido directamente en Shopify Admin.
           </s-paragraph>
-          <s-paragraph>{total} órdenes encontradas.</s-paragraph>
-        </s-section>
-
-        <s-section heading="Búsqueda y filtros">
-          <form method="get">
-            {Array.from(preservedParams.entries()).map(([key, value]) => (
-              <input key={key} type="hidden" name={key} value={value} />
-            ))}
-            <s-stack direction="inline" gap="base">
-              <s-text-field
-                label="Buscar"
-                name="q"
-                value={q}
-                placeholder="Orden, cliente, servicio..."
-              />
-              <s-select
-                label="Tipo"
-                name="kind"
-                value={kind}
-              >
-                <s-option value="ALL">Todos</s-option>
-                <s-option value="LABORAL">Laboral</s-option>
-                <s-option value="FESTIVO">Festivo</s-option>
-              </s-select>
-              <s-button type="submit" variant="primary">Aplicar</s-button>
-              {(q || kind !== "ALL") && (
-                <s-button href={buildPackagesUrl()} variant="tertiary">Limpiar</s-button>
-              )}
-            </s-stack>
-          </form>
+          <s-paragraph>
+            {total} órdenes registradas
+            {total > listLimit ? ` (mostrando las ${listLimit} más recientes)` : "."}
+          </s-paragraph>
         </s-section>
 
         <s-section>
           {packages.length === 0 ? (
-            <s-paragraph>No se encontraron órdenes con los filtros actuales.</s-paragraph>
+            <s-paragraph>No hay órdenes registradas.</s-paragraph>
           ) : (
             <s-table>
               <s-table-header-row>
@@ -177,28 +90,6 @@ export default function PackagesDetailsPage() {
               </s-table-body>
             </s-table>
           )}
-
-          <div style={{ marginTop: 16 }}>
-            <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-              <s-paragraph>Página {page} de {totalPages}</s-paragraph>
-              <s-stack direction="inline" gap="base">
-                <s-button
-                  href={buildPackagesUrl(Math.max(1, page - 1))}
-                  variant="tertiary"
-                  disabled={page <= 1}
-                >
-                  ← Anterior
-                </s-button>
-                <s-button
-                  href={buildPackagesUrl(Math.min(totalPages, page + 1))}
-                  variant="tertiary"
-                  disabled={page >= totalPages}
-                >
-                  Siguiente →
-                </s-button>
-              </s-stack>
-            </s-stack>
-          </div>
         </s-section>
       </s-stack>
     </s-page>
@@ -208,4 +99,3 @@ export default function PackagesDetailsPage() {
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
-
